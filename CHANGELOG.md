@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## [Unreleased]
+
+## [0.1.0] - 2026-10-29
 
 ### Added
 - Interfaces (`spi`): `Connector`, `Connection`, `Pool`, `Lease`, `EvictionPolicy`, `RetryPolicy`,
@@ -10,3 +12,6 @@
 - Configuration: `ZRequestConfig` (`pool`, `defaults`, `connections`), `ConfigSource` (YAML +
   `<PREFIX>__…` env vars), `ZRequestConfig::resolve` (validation, defaults applied per connection,
   secrets read from env).
+
+[Unreleased]: https://github.com/eugenezimin/z-request/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/eugenezimin/z-request/releases/tag/v0.1.0

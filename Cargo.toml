@@ -1,0 +1,42 @@
+[package]
+name = "z-request"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT OR Apache-2.0"
+description = "Pooled outbound REST and gRPC clients for services: declarative YAML/env configuration, end-user credential forwarding, retries and circuit breaking."
+readme = "README.md"
+keywords = ["client", "pool", "grpc", "rest", "microservices"]
+categories = ["network-programming", "web-programming::http-client"]
+
+[features]
+default = ["rest", "grpc", "tls", "yaml"]
+# REST transport over reqwest (arrives in build step 4).
+rest = []
+# gRPC transport over tonic (arrives in build step 5).
+grpc = []
+# `https://` endpoints, custom CAs and client certificates for both transports.
+tls = []
+# YAML configuration files: `ConfigSource::yaml_file` / `yaml_str`.
+yaml = ["dep:serde-saphyr"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde-saphyr = { version = "2", optional = true }
+thiserror = "2"
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+dbg_macro = "deny"

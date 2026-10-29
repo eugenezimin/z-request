@@ -1,0 +1,6 @@
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 2 }
+
+[profile.ci]
+retries = 0          # a flaky pool test is a bug
+fail-fast = false

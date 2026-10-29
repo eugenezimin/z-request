@@ -1,0 +1,45 @@
+# z-request configuration. Every field is optional except each connection's protocol and endpoint.
+# Env vars override any field: <PREFIX>__SECTION__FIELD, e.g. COUNTERPARTIES__POOL__HOLD=15s.
+
+pool:                          # one pool shared by every connection below
+  scope: per_uri               # per_uri | total
+  min: 0                       # per_uri: per connection · total: across all connections
+  max: 8                       # per_uri: per connection · total: across all connections · or `unlimited`
+  hold: 30s                    # how long a released connection stays open: 0s ..= 60s
+  acquire_timeout: 2s          # how long a request waits for a free connection
+
+defaults:                      # every connection inherits these unless it overrides them
+  connect_timeout: 3s
+  request_timeout: 5s
+  retry:
+    max_attempts: 3            # 1 = never retry
+    backoff:
+      initial: 100ms
+      max: 2s
+      multiplier: 2.0
+      jitter: true
+  breaker:
+    failures: 5                # consecutive failures that open the breaker
+    open_for: 30s              # how long it stays open before one trial call
+  auth: public                 # public | user | { mode: env|mixed, envvar: NAME }
+
+connections:                   # any number of named connections (lower-case, digits, _)
+  users:
+    protocol: grpc             # grpc | rest
+    endpoint: https://users.internal:9090
+    min: 2                     # optional per-connection limits (always per connection)
+    max: 16
+    auth:                      # the caller's token; the secret only for calls without a user
+      mode: mixed
+      envvar: COUNTERPARTIES_USERS_SECRET
+    tls:
+      ca_file: /etc/ssl/legaldocs-ca.pem
+      client_cert_file: /etc/ssl/counterparties.pem   # only for mTLS
+      client_key_file: /etc/ssl/counterparties.key    # only for mTLS
+      server_name: users.internal                     # only if it differs from the endpoint's host
+  registry:
+    protocol: rest
+    endpoint: https://registry.example/api            # base URL; request paths are appended
+    request_timeout: 10s
+    headers:                                          # REST only: added to every request
+      Accept: application/json

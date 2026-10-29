@@ -59,7 +59,7 @@ The name (lower-case letters, digits, `_`, starting with a letter) is what code 
 | `tls.ca_file` | no | Extra CA certificate to trust (PEM). `https://` endpoints only. |
 | `tls.client_cert_file`, `tls.client_key_file` | no, as a pair | Client certificate for mTLS. |
 | `tls.server_name` | no | Name expected on the server certificate, if it differs from the host. |
-| `headers` | no | REST only: fixed headers on every request. `authorization`, `traceparent`, `tracestate` and `x-request-id` are reserved. |
+| `headers` | no | REST only: fixed headers on every request. `authorization`, `traceparent`, `tracestate`, `x-request-id` and `x-initiator` are reserved. |
 
 Each connection counts as one URI for the limits; two connections with the same endpoint are
 counted separately.
@@ -79,6 +79,15 @@ background jobs). It never retries with the secret after the peer rejects the us
 
 Secrets are read from the named env var when the configuration is resolved, never from YAML,
 and never printed (`Debug` shows `<redacted>`).
+
+### Initiator
+
+Whatever the mode, a call also sends `x-initiator: user:<id>` or `x-initiator: service:<name>`
+when its `CallContext` has an `Initiator`. It says on whose behalf an authenticated service calls,
+so a system that authenticates every call with a service secret (`env`) can still trace each
+request to the user or job that started it. It is **for tracing and audit only**: the peer cannot
+verify it and must never base an access decision on it. Use opaque ids, never e-mails or names.
+A received value is forwarded with `Initiator::parse`.
 
 ## Env vars
 

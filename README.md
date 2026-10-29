@@ -9,6 +9,11 @@ z-request sits next to [z-auth](../z-auth) and [z-event](https://github.com/euge
 without depending on either: the host passes the user's z-auth-verified token in a `CallContext`,
 and can hand a dedicated gRPC channel to z-event's subscriber.
 
+Every call can also name its **initiator** (`x-initiator: user:<id>` or `service:<name>`), sent
+next to whatever credentials the connection uses. Services that authenticate to each other with
+their own secrets use it to trace each request back to the user or job that started it; it is
+never an authorization input.
+
 > **Status: build step 1 of 6.** Interfaces, errors and configuration are in place. The pool,
 > retry/breaker policies, credentials, and the REST and gRPC transports follow.
 

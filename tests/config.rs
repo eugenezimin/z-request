@@ -297,6 +297,8 @@ fn every_semantic_rule_is_reported_at_once() {
             x.protocol = Some(Protocol::Rest);
             x.endpoint = Some("http://a".into());
             x.headers.insert("Authorization".into(), "Bearer x".into());
+            x.headers
+                .insert("X-Initiator".into(), "user:someone".into());
             x.headers.insert("bad header".into(), "x".into());
         }),
     );
@@ -330,6 +332,7 @@ fn every_semantic_rule_is_reported_at_once() {
         "env var `MISSING` (secret for connection `secret`) is not set or empty",
         "env var `EMPTY_SECRET` (secret for connection `blank`) is not set or empty",
         "connections.headers.headers.Authorization: is set by z-request per call",
+        "connections.headers.headers.X-Initiator: is set by z-request per call",
         "connections.headers.headers.bad header: is not a valid header name",
         "connections.tls.tls: TLS settings on an http:// endpoint",
         "connections.tls.tls: client_cert_file and client_key_file go together",

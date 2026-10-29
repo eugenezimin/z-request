@@ -97,7 +97,8 @@ impl fmt::Display for Secret {
     }
 }
 
-/// W3C trace context and request id, copied from the inbound request to every outbound call.
+/// W3C trace context, request id and initiator, copied from the inbound request to every
+/// outbound call.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TraceContext {
     /// The `traceparent` header.
@@ -106,12 +107,142 @@ pub struct TraceContext {
     pub tracestate: Option<String>,
     /// The `x-request-id` header.
     pub request_id: Option<String>,
+    /// Who started the work, sent as [`INITIATOR_HEADER`].
+    pub initiator: Option<Initiator>,
 }
 
-/// What a single call carries: the caller's own token (if it has one) and the trace context.
+/// The header (gRPC metadata key) that carries the [`Initiator`].
+pub const INITIATOR_HEADER: &str = "x-initiator";
+
+/// Longest initiator id, in bytes.
+const MAX_INITIATOR_ID: usize = 200;
+
+/// What kind of party started the work a call belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InitiatorKind {
+    /// An end user, identified by an id (never an e-mail or a name).
+    User,
+    /// A service acting on its own, such as a startup load or a background job.
+    Service,
+}
+
+impl InitiatorKind {
+    /// The prefix on the wire: `user` or `service`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Service => "service",
+        }
+    }
+}
+
+/// Who started the work a call belongs to, for **tracing and audit only**.
+///
+/// Sent as `x-initiator: user:<id>` or `x-initiator: service:<name>` next to whatever
+/// credentials the connection's auth mode sends. The receiving service cannot verify it, so it
+/// must never be used for an access decision; it only says, in logs and traces, on whose behalf
+/// an authenticated peer called.
+///
+/// The id is 1 to 200 visible ASCII characters (no spaces or control characters), so it is
+/// always a valid header value. Use an opaque id, never personal data.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct Initiator {
+    kind: InitiatorKind,
+    /// The whole wire value, `<kind>:<id>`.
+    value: Arc<str>,
+}
+
+/// An initiator that cannot be sent: an unknown kind, or an empty, too long or non-printable id.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid initiator `{value}`: {reason}")]
+pub struct InvalidInitiator {
+    /// The rejected value (truncated).
+    pub value: String,
+    /// Why it was rejected.
+    pub reason: &'static str,
+}
+
+impl Initiator {
+    /// An end user, e.g. `user:0192f0c4-…`.
+    pub fn user(id: impl AsRef<str>) -> Result<Self, InvalidInitiator> {
+        Self::new(InitiatorKind::User, id.as_ref())
+    }
+
+    /// A service acting on its own, e.g. `service:counterparties/address-backfill`.
+    pub fn service(name: impl AsRef<str>) -> Result<Self, InvalidInitiator> {
+        Self::new(InitiatorKind::Service, name.as_ref())
+    }
+
+    /// Reads a received `x-initiator` value, to forward it on the next call.
+    pub fn parse(value: &str) -> Result<Self, InvalidInitiator> {
+        match value.split_once(':') {
+            Some(("user", id)) => Self::user(id),
+            Some(("service", name)) => Self::service(name),
+            _ => Err(invalid(value, "must start with `user:` or `service:`")),
+        }
+    }
+
+    fn new(kind: InitiatorKind, id: &str) -> Result<Self, InvalidInitiator> {
+        let value = format!("{}:{id}", kind.as_str());
+        if id.is_empty() {
+            return Err(invalid(&value, "the id is empty"));
+        }
+        if id.len() > MAX_INITIATOR_ID {
+            return Err(invalid(&value, "the id is longer than 200 bytes"));
+        }
+        if !id.bytes().all(|b| b.is_ascii_graphic()) {
+            return Err(invalid(
+                &value,
+                "the id may only hold visible ASCII characters",
+            ));
+        }
+        Ok(Self {
+            kind,
+            value: value.into(),
+        })
+    }
+
+    /// The kind of party.
+    pub fn kind(&self) -> InitiatorKind {
+        self.kind
+    }
+
+    /// The id without the kind prefix.
+    pub fn id(&self) -> &str {
+        &self.value[self.kind.as_str().len() + 1..]
+    }
+
+    /// The whole header value, `<kind>:<id>`.
+    pub fn as_str(&self) -> &str {
+        &self.value
+    }
+}
+
+fn invalid(value: &str, reason: &'static str) -> InvalidInitiator {
+    InvalidInitiator {
+        value: value.chars().take(64).collect(),
+        reason,
+    }
+}
+
+impl fmt::Display for Initiator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.value)
+    }
+}
+
+impl fmt::Debug for Initiator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Initiator({})", self.value)
+    }
+}
+
+/// What a single call carries: the caller's own token (if it has one) and the trace context,
+/// including the [`Initiator`].
 ///
 /// Which credentials are actually sent is decided by the connection's auth mode
-/// (see [`CredentialsResolver`]).
+/// (see [`CredentialsResolver`]). The initiator is sent whatever the mode, so a host that
+/// authenticates every call with its own secret (`env`) still says on whose behalf it calls.
 #[derive(Debug, Clone, Default)]
 pub struct CallContext {
     user_token: Option<Secret>,
@@ -143,6 +274,17 @@ impl CallContext {
     /// The trace context to propagate.
     pub fn trace(&self) -> &TraceContext {
         &self.trace
+    }
+
+    /// Who started the work, if known.
+    pub fn initiator(&self) -> Option<&Initiator> {
+        self.trace.initiator.as_ref()
+    }
+
+    /// The same call, on behalf of `initiator`.
+    pub fn with_initiator(mut self, initiator: Initiator) -> Self {
+        self.trace.initiator = Some(initiator);
+        self
     }
 }
 
@@ -383,6 +525,42 @@ mod tests {
             *rec.0.lock().unwrap(),
             vec![(SlotId(1), true), (SlotId(2), false), (SlotId(3), false)]
         );
+    }
+
+    #[test]
+    fn initiators_are_valid_header_values() {
+        let u = Initiator::user("0192f0c4-7b1e-7c3a-9f00-000000000001").unwrap();
+        assert_eq!(u.kind(), InitiatorKind::User);
+        assert_eq!(u.id(), "0192f0c4-7b1e-7c3a-9f00-000000000001");
+        assert_eq!(u.as_str(), "user:0192f0c4-7b1e-7c3a-9f00-000000000001");
+
+        let s = Initiator::service("counterparties/address-backfill").unwrap();
+        assert_eq!(s.to_string(), "service:counterparties/address-backfill");
+        assert_eq!(Initiator::parse(s.as_str()).unwrap(), s);
+        assert_eq!(Initiator::parse("user:a:b").unwrap().id(), "a:b");
+
+        for bad in [
+            "",
+            "user:",
+            "admin:x",
+            "user",
+            "user:a b",
+            "user:a\r\nx-evil: 1",
+            "user:é",
+        ] {
+            assert!(Initiator::parse(bad).is_err(), "accepted {bad:?}");
+        }
+        assert!(Initiator::user("x".repeat(200)).is_ok());
+        assert!(Initiator::user("x".repeat(201)).is_err());
+    }
+
+    #[test]
+    fn the_initiator_travels_with_the_trace_context() {
+        let who = Initiator::user("u1").unwrap();
+        let ctx = CallContext::without_user(TraceContext::default()).with_initiator(who.clone());
+        assert_eq!(ctx.initiator(), Some(&who));
+        assert_eq!(ctx.trace().initiator.as_ref(), Some(&who));
+        assert!(ctx.user_token().is_none());
     }
 
     #[test]

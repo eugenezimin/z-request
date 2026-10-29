@@ -27,4 +27,7 @@ mod utils;
 
 pub use utils::error::{ConfigError, Error, Problem};
 pub use utils::spi;
-pub use utils::spi::{CallContext, Protocol, Secret, Target, TraceContext};
+pub use utils::spi::{
+    CallContext, INITIATOR_HEADER, Initiator, InitiatorKind, InvalidInitiator, Protocol, Secret,
+    Target, TraceContext,
+};

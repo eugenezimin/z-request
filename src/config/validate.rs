@@ -8,13 +8,19 @@ use crate::config::model::{
     TlsConfig, ZRequestConfig,
 };
 use crate::utils::error::{ConfigError, Problem};
-use crate::utils::spi::{Protocol, Secret, Target};
+use crate::utils::spi::{INITIATOR_HEADER, Protocol, Secret, Target};
 
 /// The longest `pool.hold` allowed.
 pub const MAX_HOLD: Duration = Duration::from_secs(60);
 
 /// Headers z-request sets itself; configuring them is an error.
-const RESERVED_HEADERS: [&str; 4] = ["authorization", "traceparent", "tracestate", "x-request-id"];
+const RESERVED_HEADERS: [&str; 5] = [
+    "authorization",
+    "traceparent",
+    "tracestate",
+    "x-request-id",
+    INITIATOR_HEADER,
+];
 
 /// A validated configuration, ready for building pools and connections.
 #[derive(Debug, Clone)]
@@ -406,7 +412,7 @@ fn resolve_connection(
         if RESERVED_HEADERS.contains(&lower.as_str()) {
             p.add(
                 format!("{}.{k}", at("headers")),
-                "is set by z-request per call (credentials and trace context)",
+                "is set by z-request per call (credentials, trace context and initiator)",
             );
         } else if k.is_empty()
             || !k

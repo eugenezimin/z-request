@@ -30,6 +30,15 @@
 - Configuration: `max_response_size` (default `10MiB`, overridable per connection) and the `size`
   format (`512KiB`, `10MiB`, `5MB`).
 - `Error::InvalidRequest`: a request that cannot be sent as built (path, header, body).
+- `grpc` (feature `grpc`): `GrpcConnector` and `GrpcConnection` (one tonic channel, one HTTP/2
+  socket, per pooled connection; a call holds it on its own), `GrpcClient::call` (one call through
+  `Policies::run` on a `GrpcChannel` that generated clients take as is, adding credentials, trace
+  context, initiator and `grpc-timeout`) and `GrpcClient::dedicated` (a `DedicatedChannel` for a
+  long-lived stream). tonic's own deadline, unreachable-peer and broken-connection errors map to
+  `Timeout`, `Connect` and `Transport`; the peer's statuses to `Status`. `grpc::tonic` re-exports
+  the tonic version used.
+- HTTPS for gRPC (feature `tls`): the same platform verifier and `tls.ca_file`, mTLS and
+  `tls.server_name`.
 
 ### Changed
 - Configuration: an `env`/`mixed` secret that is not visible ASCII is rejected.
@@ -39,8 +48,9 @@
 ### Dependencies
 - `tokio` (features `rt`, `sync`, `time`).
 - `fastrand`, for retry jitter.
-- `reqwest` (feature `rest`, no default features), `bytes`; `rustls` (`ring`) and
-  `rustls-platform-verifier` (feature `tls`).
+- `reqwest` (feature `rest`, no default features), `bytes`; `tonic` (feature `grpc`, `channel`
+  only); `rustls` (`ring`) and `rustls-platform-verifier` (feature `tls`, which also enables
+  tonic's `tls-ring`).
 
 ## [0.1.0] - 2026-10-29
 

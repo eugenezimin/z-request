@@ -11,12 +11,12 @@ use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::connector::{RestConnection, RestConnector, base_url};
-use super::error_text;
+use super::connector::{RestConnection, RestConnector};
 use crate::config::ConnectionSettings;
 use crate::credentials::{AUTHORIZATION, RESERVED_HEADERS, outbound_headers};
 use crate::policy::{ExponentialBackoff, Policies};
 use crate::pool::TypedPool;
+use crate::utils::error::error_text;
 use crate::utils::error::{ConfigError, Error};
 use crate::utils::spi::{
     CallContext, CircuitBreaker, CredentialsResolver, Lease, Protocol, RetryPolicy, Target,
@@ -107,7 +107,7 @@ impl RestClient {
         }
         Ok(Self(Arc::new(Inner {
             target: settings.target(),
-            base: base_url(settings),
+            base: settings.base_url(),
             base_path: settings.endpoint.base_path.clone(),
             headers,
             pool,

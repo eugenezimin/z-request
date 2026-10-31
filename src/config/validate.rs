@@ -115,6 +115,32 @@ impl ConnectionSettings {
     pub fn target(&self) -> Target {
         Target::new(self.name.as_str(), self.endpoint.url.as_str())
     }
+
+    /// The `tls.server_name` of an `https://` connection, if set.
+    #[cfg(any(feature = "rest", feature = "grpc"))]
+    pub(crate) fn server_name(&self) -> Option<&str> {
+        self.tls
+            .as_ref()
+            .and_then(|t| t.server_name.as_deref())
+            .filter(|_| self.endpoint.secure)
+    }
+
+    /// The URL calls start with: scheme, host, explicit port and base path, no trailing `/`.
+    ///
+    /// For REST with `tls.server_name`, the host is that name, so TLS expects it on the
+    /// certificate and sends it as SNI and `Host`, while a resolver still connects to the
+    /// endpoint's host.
+    #[cfg(any(feature = "rest", feature = "grpc"))]
+    pub(crate) fn base_url(&self) -> String {
+        let e = &self.endpoint;
+        let scheme = if e.secure { "https" } else { "http" };
+        let host = match self.server_name() {
+            Some(name) if self.protocol == Protocol::Rest => name.to_owned(),
+            _ if e.host.contains(':') => format!("[{}]", e.host),
+            _ => e.host.clone(),
+        };
+        format!("{scheme}://{host}:{}{}", e.port, e.base_path)
+    }
 }
 
 impl ZRequestConfig {

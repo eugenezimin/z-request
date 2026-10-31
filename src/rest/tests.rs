@@ -479,120 +479,36 @@ fn grpc_connections_are_refused() {
 
 #[cfg(feature = "tls")]
 mod tls {
-    use std::path::PathBuf;
-
-    use rcgen::{
-        BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer,
-        KeyPair, KeyUsagePurpose,
-    };
+    use rustls::pki_types::PrivateKeyDer;
     use rustls::pki_types::pem::PemObject;
-    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
     use rustls::server::WebPkiClientVerifier;
 
     use super::*;
     use crate::config::TlsConfig;
+    use crate::test_support::Pki;
 
-    /// A test CA, a server certificate for `localhost` and `svc.internal`, and a client
-    /// certificate, written as PEM files to a fresh directory.
-    struct Pki {
-        dir: PathBuf,
-        ca: CertificateDer<'static>,
-        server_chain: Vec<CertificateDer<'static>>,
-        server_key: String,
-    }
-
-    impl Pki {
-        fn new() -> Self {
-            static N: AtomicUsize = AtomicUsize::new(0);
-            let dir = std::env::temp_dir().join(format!(
-                "z-request-tls-{}-{}",
-                std::process::id(),
-                N.fetch_add(1, SeqCst)
-            ));
-            std::fs::create_dir_all(&dir).unwrap();
-
-            // Validity within the current and the next year (below the 825 days macOS allows).
-            let year = 1970
-                + (std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs()
-                    / 31_556_952) as i32;
-            let validity = |p: &mut CertificateParams| {
-                p.not_before = rcgen::date_time_ymd(year, 1, 1);
-                p.not_after = rcgen::date_time_ymd(year + 1, 12, 31);
-            };
-
-            let ca_key = KeyPair::generate().unwrap();
-            let mut ca = CertificateParams::new(Vec::<String>::new()).unwrap();
-            ca.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-            ca.distinguished_name
-                .push(DnType::CommonName, "z-request test CA");
-            ca.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
-            validity(&mut ca);
-            let ca_cert = ca.self_signed(&ca_key).unwrap();
-            let issuer = Issuer::new(ca, ca_key);
-
-            let leaf = |names: Vec<String>, purpose: ExtendedKeyUsagePurpose| {
-                let key = KeyPair::generate().unwrap();
-                let mut p = CertificateParams::new(names).unwrap();
-                p.extended_key_usages = vec![purpose];
-                validity(&mut p);
-                (p.signed_by(&key, &issuer).unwrap(), key)
-            };
-            let (server, server_key) = leaf(
-                vec!["localhost".into(), "svc.internal".into()],
-                ExtendedKeyUsagePurpose::ServerAuth,
-            );
-            let (client, client_key) =
-                leaf(vec!["client".into()], ExtendedKeyUsagePurpose::ClientAuth);
-
-            let write = |name: &str, pem: String| std::fs::write(dir.join(name), pem).unwrap();
-            write("ca.pem", ca_cert.pem());
-            write("client.pem", client.pem());
-            write("client.key", client_key.serialize_pem());
-            Self {
-                dir,
-                ca: ca_cert.der().clone(),
-                server_chain: vec![server.der().clone()],
-                server_key: server_key.serialize_pem(),
-            }
-        }
-
-        fn file(&self, name: &str) -> PathBuf {
-            self.dir.join(name)
-        }
-
-        async fn server(&self, require_client_cert: bool) -> Server {
-            let provider = Arc::new(rustls::crypto::ring::default_provider());
-            let builder = rustls::ServerConfig::builder_with_provider(provider.clone())
-                .with_safe_default_protocol_versions()
+    async fn server(pki: &Pki, require_client_cert: bool) -> Server {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let builder = rustls::ServerConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .unwrap();
+        let builder = if require_client_cert {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.add(pki.ca.clone()).unwrap();
+            let verifier = WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
+                .build()
                 .unwrap();
-            let builder = if require_client_cert {
-                let mut roots = rustls::RootCertStore::empty();
-                roots.add(self.ca.clone()).unwrap();
-                let verifier =
-                    WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider)
-                        .build()
-                        .unwrap();
-                builder.with_client_cert_verifier(verifier)
-            } else {
-                builder.with_no_client_auth()
-            };
-            let key = PrivateKeyDer::from_pem_slice(self.server_key.as_bytes()).unwrap();
-            let mut config = builder
-                .with_single_cert(self.server_chain.clone(), key)
-                .unwrap();
-            config.alpn_protocols = vec![b"http/1.1".to_vec()];
-            let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
-            Server::listen(Arc::new(|_: &Seen, _| reply(200, "secure")), Some(acceptor)).await
-        }
-    }
-
-    impl Drop for Pki {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.dir);
-        }
+            builder.with_client_cert_verifier(verifier)
+        } else {
+            builder.with_no_client_auth()
+        };
+        let key = PrivateKeyDer::from_pem_slice(pki.server_key.as_bytes()).unwrap();
+        let mut config = builder
+            .with_single_cert(pki.server_chain.clone(), key)
+            .unwrap();
+        config.alpn_protocols = vec![b"http/1.1".to_vec()];
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+        Server::listen(Arc::new(|_: &Seen, _| reply(200, "secure")), Some(acceptor)).await
     }
 
     fn https(url: &str, tls: TlsConfig) -> ConnectionSettings {
@@ -605,7 +521,7 @@ mod tls {
     #[tokio::test]
     async fn https_with_the_configured_ca() {
         let pki = Pki::new();
-        let server = pki.server(false).await;
+        let server = server(&pki, false).await;
         let c = https(
             &format!("https://localhost:{}", server.addr.port()),
             TlsConfig {
@@ -620,7 +536,7 @@ mod tls {
     #[tokio::test]
     async fn an_untrusted_server_is_refused() {
         let pki = Pki::new();
-        let server = pki.server(false).await;
+        let server = server(&pki, false).await;
         let c = https(
             &format!("https://localhost:{}", server.addr.port()),
             TlsConfig::default(),
@@ -637,7 +553,7 @@ mod tls {
     #[tokio::test]
     async fn server_name_checks_the_certificate_for_another_name() {
         let pki = Pki::new();
-        let server = pki.server(false).await;
+        let server = server(&pki, false).await;
         let c = https(
             &format!("https://127.0.0.1:{}", server.addr.port()),
             TlsConfig {
@@ -654,7 +570,7 @@ mod tls {
     #[tokio::test]
     async fn a_client_certificate_is_presented_for_mtls() {
         let pki = Pki::new();
-        let server = pki.server(true).await;
+        let server = server(&pki, true).await;
         let url = format!("https://localhost:{}", server.addr.port());
         let with_cert = https(
             &url,

@@ -7,6 +7,7 @@ use crate::config::model::{
     AuthConfig, BackoffConfig, BreakerConfig, ConnectionConfig, Limit, RetryConfig, Scope,
     TlsConfig, ZRequestConfig,
 };
+use crate::credentials::{AUTHORIZATION, REQUEST_ID, TRACEPARENT, TRACESTATE, is_header_safe};
 use crate::utils::error::{ConfigError, Problem};
 use crate::utils::spi::{INITIATOR_HEADER, Protocol, Secret, Target};
 
@@ -15,10 +16,10 @@ pub const MAX_HOLD: Duration = Duration::from_secs(60);
 
 /// Headers z-request sets itself; configuring them is an error.
 const RESERVED_HEADERS: [&str; 5] = [
-    "authorization",
-    "traceparent",
-    "tracestate",
-    "x-request-id",
+    AUTHORIZATION,
+    TRACEPARENT,
+    TRACESTATE,
+    REQUEST_ID,
     INITIATOR_HEADER,
 ];
 
@@ -467,7 +468,16 @@ fn secret(
         return None;
     }
     match lookup(envvar) {
-        Some(v) if !v.trim().is_empty() => Some(Secret::new(v.trim())),
+        Some(v) if is_header_safe(v.trim()) => Some(Secret::new(v.trim())),
+        Some(v) if !v.trim().is_empty() => {
+            p.add(
+                format!("{path}.envvar"),
+                format!(
+                    "env var `{envvar}` (secret for connection `{connection}`) holds characters that cannot be sent in a header"
+                ),
+            );
+            None
+        }
         _ => {
             p.add(
                 format!("{path}.envvar"),

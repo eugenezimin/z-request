@@ -40,12 +40,12 @@ waits.
 |---|---|---|
 | `connect_timeout` | `3s` | Time allowed to open a connection, including TLS. |
 | `request_timeout` | `5s` | Deadline for one attempt (sent as `grpc-timeout` for gRPC). |
-| `retry.max_attempts` | `3` | Total attempts counting the first; `1` never retries. Only idempotent calls are retried, and only on retryable errors. |
+| `retry.max_attempts` | `3` | Total attempts counting the first; `1` never retries. Only retryable errors are retried, and only for idempotent calls, except a failed connect: the request was never sent, so any call is retried. |
 | `retry.backoff.initial` / `max` | `100ms` / `2s` | First wait, and the cap on any wait. |
 | `retry.backoff.multiplier` | `2.0` | Each wait is the previous one times this (at least `1.0`). |
 | `retry.backoff.jitter` | `true` | Shorten each wait randomly to 50–100 %. |
-| `breaker.failures` | `5` | Consecutive failures that open the breaker; calls then fail fast with `CircuitOpen`. |
-| `breaker.open_for` | `30s` | How long it stays open before one trial call. |
+| `breaker.failures` | `5` | Consecutive failures that open the breaker; calls then fail fast with `CircuitOpen`. A failure is the peer's: connect failures, timeouts, broken connections, HTTP 5xx and 429, gRPC `UNKNOWN`, `DEADLINE_EXCEEDED`, `RESOURCE_EXHAUSTED`, `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS`. Other answers count as successes; local errors (no free pooled connection, credentials) count as neither. |
+| `breaker.open_for` | `30s` | How long it stays open before one trial call. The trial's success closes it, its failure opens it again; a trial that never reports back is replaced after another `open_for`. |
 | `auth` | `public` | What calls send; see [Auth](#auth). |
 
 ## `connections.<name>`: one peer each
@@ -83,7 +83,10 @@ background jobs). It never retries with the secret after the peer rejects the us
 (401/403): that would bypass the user's own authorization.
 
 Secrets are read from the named env var when the configuration is resolved, never from YAML,
-and never printed (`Debug` shows `<redacted>`).
+and never printed (`Debug` shows `<redacted>`). A secret must be visible ASCII (no spaces or line
+breaks inside) so it can be sent in a header. Likewise a caller's token that is empty or not
+visible ASCII fails the call with `InvalidCredentials`; under `mixed` too, it never falls back to
+the secret.
 
 ### Initiator
 
@@ -124,6 +127,7 @@ Semantic (`resolve`):
 - connection names, missing `protocol`/`endpoint`, malformed endpoints, a protocol or `https`
   without its feature, a path on a gRPC endpoint;
 - `retry` (`max_attempts ≥ 1`, `initial ≤ max`, `multiplier ≥ 1.0`), `breaker.failures ≥ 1`;
-- `env`/`mixed` with an `envvar` that is invalid, unset or empty;
+- `env`/`mixed` with an `envvar` that is invalid, unset or empty, or a secret that is not visible
+  ASCII;
 - TLS on an `http://` endpoint, half an mTLS pair;
 - `headers` on gRPC, reserved or invalid header names, multi-line values.

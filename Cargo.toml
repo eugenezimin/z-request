@@ -21,6 +21,8 @@ tls = []
 yaml = ["dep:serde-saphyr"]
 
 [dependencies]
+# Retry jitter (not security-sensitive).
+fastrand = "2.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-saphyr = { version = "2", optional = true }

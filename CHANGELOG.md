@@ -2,13 +2,18 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-31
+
 ### Added
+- `Connections`, the composition root: `Connections::build(&resolved)` builds every connection
+  (one shared pool, connectors, `AuthResolver`, `ConsecutiveFailures`), hands out
+  `rest(name)` / `grpc(name)` clients, and shuts down with `close()`. `ConnectionsBuilder`
+  replaces the eviction policy, the credentials resolver or the breaker.
 - `pool`: `ConnectionPool`, the one pool shared by every connection of every protocol
   (`per_uri`/`total` limits, `min` opened on demand and never closed by `hold`, `hold` expiry,
   first-come-first-served waiting within `acquire_timeout`, eviction of another connection's
   idle connection at the `total` cap, `close()` for shutdown); `TypedPool<K>`, the per-protocol
   handle implementing `spi::Pool`; `LruEviction`, the default `EvictionPolicy`; `TargetStats`.
-- `Error::PoolClosed`.
 - `policy`: `ExponentialBackoff` (the default `RetryPolicy`: exponential waits with jitter,
   idempotent calls only, except that a failed connect is retried for any call),
   `ConsecutiveFailures` (the default `CircuitBreaker`, per connection, with one trial call after
@@ -17,19 +22,11 @@
 - `credentials`: `AuthResolver` (the default `CredentialsResolver` for `public`, `user`, `env`
   and `mixed`), `outbound_headers()` (authorization, trace context and `x-initiator`, leaving out
   values a header cannot carry) and the header-name constants.
-- `Error::InvalidCredentials`: a caller's token that is empty or not visible ASCII is rejected
-  rather than sent.
-
 - `rest` (feature `rest`): `RestConnector` and `RestConnection` (one reqwest client per pooled
   connection, keeping one socket, so the pool's limits count real sockets; no redirects, no
   proxies, no retries of its own), and `RestClient` with `RestRequest`/`RestResponse` (credentials,
   trace headers and fixed headers on every request, retries through `Policies::run`, responses
   read in full up to `max_response_size`, paths kept below the base path).
-- HTTPS (feature `tls`): rustls with `ring`, servers verified against the platform's trust store
-  plus `tls.ca_file`, client certificates for mTLS, and `tls.server_name`.
-- Configuration: `max_response_size` (default `10MiB`, overridable per connection) and the `size`
-  format (`512KiB`, `10MiB`, `5MB`).
-- `Error::InvalidRequest`: a request that cannot be sent as built (path, header, body).
 - `grpc` (feature `grpc`): `GrpcConnector` and `GrpcConnection` (one tonic channel, one HTTP/2
   socket, per pooled connection; a call holds it on its own), `GrpcClient::call` (one call through
   `Policies::run` on a `GrpcChannel` that generated clients take as is, adding credentials, trace
@@ -37,23 +34,24 @@
   long-lived stream). tonic's own deadline, unreachable-peer and broken-connection errors map to
   `Timeout`, `Connect` and `Transport`; the peer's statuses to `Status`. `grpc::tonic` re-exports
   the tonic version used.
-- HTTPS for gRPC (feature `tls`): the same platform verifier and `tls.ca_file`, mTLS and
+- HTTPS (feature `tls`) for both transports: rustls with `ring`, servers verified against the
+  platform's trust store plus `tls.ca_file`, client certificates for mTLS, and
   `tls.server_name`.
-- `Connections`, the composition root: `Connections::build(&resolved)` builds every connection
-  (one shared pool, connectors, `AuthResolver`, `ConsecutiveFailures`), hands out
-  `rest(name)` / `grpc(name)` clients, and shuts down with `close()`. `ConnectionsBuilder`
-  replaces the eviction policy, the credentials resolver or the breaker.
 - `telemetry`: a `z_request.call` span per call (connection, protocol, method, path, auth,
   attempts, result, status, error), retry and breaker events, and metrics through the `metrics`
   facade: `z_request_calls_total`, `z_request_call_duration_seconds`, `z_request_retries_total`,
   `z_request_pool_connections`, `z_request_pool_waiting`, with bounded labels. No subscriber,
   recorder or exporter is installed.
-- `Error::kind()`: a short, stable name for each error (the `result` label).
+- Configuration: `max_response_size` (default `10MiB`, overridable per connection) and the `size`
+  format (`512KiB`, `10MiB`, `5MB`).
+- Errors: `PoolClosed`, `InvalidCredentials` (a caller's token that is empty or not visible ASCII
+  is rejected rather than sent), `InvalidRequest` (a request that cannot be sent as built), and
+  `Error::kind()`, a short, stable name for each error (the `result` label).
 
 ### Changed
 - Configuration: an `env`/`mixed` secret that is not visible ASCII is rejected.
-- `Initiator` (`user:<id>` / `service:<name>`), carried in `TraceContext` and sent as
-  `x-initiator` for tracing and audit; `x-initiator` is a reserved header.
+- `DefaultsConfig`, `ConnectionConfig` and `ConnectionSettings` have a new public field,
+  `max_response_size`; code that builds them field by field must set it (or use `..Default`).
 
 ### Dependencies
 - `tokio` (features `rt`, `sync`, `time`).
@@ -69,10 +67,13 @@
 - Interfaces (`spi`): `Connector`, `Connection`, `Pool`, `Lease`, `EvictionPolicy`, `RetryPolicy`,
   `CircuitBreaker`, `CredentialsResolver`, `ConfigLoader`, and the value types `Target`,
   `CallContext`, `TraceContext`, `Secret`, `Sent`.
+- `Initiator` (`user:<id>` / `service:<name>`), carried in `TraceContext` and sent as
+  `x-initiator` for tracing and audit; `x-initiator` is a reserved header.
 - `Error` (with `is_retryable()`) and `ConfigError` (every problem at once).
 - Configuration: `ZRequestConfig` (`pool`, `defaults`, `connections`), `ConfigSource` (YAML +
   `<PREFIX>__…` env vars), `ZRequestConfig::resolve` (validation, defaults applied per connection,
   secrets read from env).
 
-[Unreleased]: https://github.com/eugenezimin/z-request/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/eugenezimin/z-request/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/eugenezimin/z-request/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/eugenezimin/z-request/releases/tag/v0.1.0

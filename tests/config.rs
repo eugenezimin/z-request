@@ -20,6 +20,7 @@ fn secrets(name: &str) -> Option<String> {
     match name {
         "USERS_SECRET" => Some("s3cr3t".into()),
         "EMPTY_SECRET" => Some("  ".into()),
+        "MULTILINE_SECRET" => Some("abc\nx-evil: 1".into()),
         _ => None,
     }
 }
@@ -292,6 +293,16 @@ fn every_semantic_rule_is_reported_at_once() {
         }),
     );
     c.connections.insert(
+        "multiline".into(),
+        bad(&|x| {
+            x.protocol = Some(Protocol::Rest);
+            x.endpoint = Some("http://a".into());
+            x.auth = Some(AuthConfig::Env {
+                envvar: "MULTILINE_SECRET".into(),
+            });
+        }),
+    );
+    c.connections.insert(
         "headers".into(),
         bad(&|x| {
             x.protocol = Some(Protocol::Rest);
@@ -331,6 +342,7 @@ fn every_semantic_rule_is_reported_at_once() {
         "connections.limits.min: is 5 but this connection's max is 2",
         "env var `MISSING` (secret for connection `secret`) is not set or empty",
         "env var `EMPTY_SECRET` (secret for connection `blank`) is not set or empty",
+        "env var `MULTILINE_SECRET` (secret for connection `multiline`) holds characters that cannot be sent in a header",
         "connections.headers.headers.Authorization: is set by z-request per call",
         "connections.headers.headers.X-Initiator: is set by z-request per call",
         "connections.headers.headers.bad header: is not a valid header name",
@@ -339,6 +351,7 @@ fn every_semantic_rule_is_reported_at_once() {
     ] {
         assert!(has(&e, needle), "missing `{needle}` in:\n{e}");
     }
+    assert!(!e.to_string().contains("x-evil"), "a secret leaked:\n{e}");
 }
 
 #[cfg(feature = "grpc")]

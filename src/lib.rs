@@ -10,8 +10,9 @@
 //!
 //! ## Status
 //!
-//! Build step 2 of 6: interfaces ([`spi`]), errors, configuration and the connection [`pool`].
-//! The retry/breaker policies, credentials and the REST/gRPC transports follow.
+//! Build step 3 of 6: interfaces ([`spi`]), errors, configuration, the connection [`pool`], the
+//! retry/breaker [`policy`] with the shared call loop, and [`credentials`]. The REST and gRPC
+//! transports follow.
 //!
 //! The pool needs a tokio runtime with time enabled.
 //!
@@ -25,9 +26,15 @@
 //! All four are on by default.
 
 pub mod config;
+pub mod credentials;
+pub mod policy;
 pub mod pool;
+#[cfg(test)]
+mod test_support;
 mod utils;
 
+pub use credentials::AuthResolver;
+pub use policy::{BreakerState, ConsecutiveFailures, ExponentialBackoff, Policies};
 pub use pool::{ConnectionPool, ConnectionPoolBuilder, LruEviction, TargetStats, TypedPool};
 pub use utils::error::{ConfigError, Error, Problem};
 pub use utils::spi;

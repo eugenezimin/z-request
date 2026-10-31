@@ -37,6 +37,15 @@ pub enum Error {
         /// The connection's name.
         connection: String,
     },
+    /// The call's user token cannot be sent: it is empty or holds characters a header cannot
+    /// carry. The token itself is never part of the error.
+    #[error("connection `{connection}`: invalid user credentials: {reason}")]
+    InvalidCredentials {
+        /// The connection's name.
+        connection: String,
+        /// What is wrong with the token.
+        reason: String,
+    },
     /// No connection became free within `pool.acquire_timeout`.
     #[error("connection `{connection}`: no pooled connection free within {waited:?}")]
     AcquireTimeout {
@@ -137,6 +146,7 @@ impl Error {
             Self::UnknownConnection { connection }
             | Self::WrongProtocol { connection, .. }
             | Self::MissingUserCredentials { connection }
+            | Self::InvalidCredentials { connection, .. }
             | Self::AcquireTimeout { connection, .. }
             | Self::PoolClosed { connection }
             | Self::Connect { connection, .. }

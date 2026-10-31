@@ -342,7 +342,7 @@ pub trait Connection: Send + Sync + 'static {
     fn close(self) -> impl Future<Output = ()> + Send;
 }
 
-/// Identifies one pooled connection.
+/// Identifies one pooled connection. Opaque: pools may encode their own data in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SlotId(pub u64);
 
@@ -454,6 +454,8 @@ pub struct IdleView<'a> {
 }
 
 /// Picks which held connection to close when the pool is full and another target needs room.
+///
+/// The pool calls it while locked: it must be quick and must not call back into the pool.
 pub trait EvictionPolicy: Send + Sync + 'static {
     /// The connection to close for `requested`, or `None` to wait instead.
     fn choose(&self, requested: &Target, idle: &[IdleView<'_>]) -> Option<SlotId>;

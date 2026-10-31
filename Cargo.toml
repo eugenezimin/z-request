@@ -25,8 +25,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-saphyr = { version = "2", optional = true }
 thiserror = "2"
+# The pool's waiting, timers and background closing. `rt` for `Handle`, `time` for timeouts and
+# the hold timer, `sync` for handing connections to waiting requests.
+tokio = { version = "1.54", default-features = false, features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
+tokio = { version = "1.54", features = ["macros", "rt", "rt-multi-thread", "sync", "test-util", "time"] }
 
 [lints.rust]
 unsafe_code = "forbid"

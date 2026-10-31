@@ -10,8 +10,10 @@
 //!
 //! ## Status
 //!
-//! Build step 1 of 6: interfaces ([`spi`]), errors and configuration. The pool, policies,
-//! credentials and the REST/gRPC transports follow.
+//! Build step 2 of 6: interfaces ([`spi`]), errors, configuration and the connection [`pool`].
+//! The retry/breaker policies, credentials and the REST/gRPC transports follow.
+//!
+//! The pool needs a tokio runtime with time enabled.
 //!
 //! ## Features
 //!
@@ -23,8 +25,10 @@
 //! All four are on by default.
 
 pub mod config;
+pub mod pool;
 mod utils;
 
+pub use pool::{ConnectionPool, ConnectionPoolBuilder, LruEviction, TargetStats, TypedPool};
 pub use utils::error::{ConfigError, Error, Problem};
 pub use utils::spi;
 pub use utils::spi::{

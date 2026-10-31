@@ -45,6 +45,13 @@ pub enum Error {
         /// How long the request waited.
         waited: Duration,
     },
+    /// The pool was closed ([`ConnectionPool::close`](crate::pool::ConnectionPool::close)), so it
+    /// hands out no more connections.
+    #[error("connection `{connection}`: the pool is closed")]
+    PoolClosed {
+        /// The connection's name.
+        connection: String,
+    },
     /// Opening a connection failed.
     #[error("connection `{connection}`: connect failed: {reason}")]
     Connect {
@@ -131,6 +138,7 @@ impl Error {
             | Self::WrongProtocol { connection, .. }
             | Self::MissingUserCredentials { connection }
             | Self::AcquireTimeout { connection, .. }
+            | Self::PoolClosed { connection }
             | Self::Connect { connection, .. }
             | Self::Timeout { connection, .. }
             | Self::CircuitOpen { connection }
@@ -257,6 +265,12 @@ mod tests {
             }
             .is_retryable()
         );
+        let closed = Error::PoolClosed {
+            connection: "c".into(),
+        };
+        assert!(!closed.is_retryable(), "a closed pool stays closed");
+        assert_eq!(closed.connection(), Some("c"));
+        assert_eq!(closed.to_string(), "connection `c`: the pool is closed");
     }
 
     #[test]

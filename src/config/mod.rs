@@ -12,13 +12,14 @@
 pub mod duration;
 mod env;
 mod model;
+pub mod size;
 mod source;
 mod validate;
 
 pub use model::{
     AuthConfig, BackoffConfig, BackoffOverride, BreakerConfig, BreakerOverride, ConnectionConfig,
-    DefaultsConfig, Limit, PoolConfig, RetryConfig, RetryOverride, Scope, TlsConfig,
-    ZRequestConfig,
+    DEFAULT_MAX_RESPONSE_SIZE, DefaultsConfig, Limit, PoolConfig, RetryConfig, RetryOverride,
+    Scope, TlsConfig, ZRequestConfig,
 };
 pub use source::ConfigSource;
 pub use validate::{

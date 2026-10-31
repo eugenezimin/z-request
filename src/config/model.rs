@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::config::duration;
+use crate::config::{duration, size};
 use crate::utils::spi::Protocol;
 
 /// The whole z-request configuration: `pool`, `defaults` and `connections`.
@@ -132,6 +132,9 @@ impl Default for PoolConfig {
     }
 }
 
+/// The default `max_response_size`: 10 MiB.
+pub const DEFAULT_MAX_RESPONSE_SIZE: u64 = 10 << 20;
+
 /// `defaults:`: settings every connection inherits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -142,6 +145,9 @@ pub struct DefaultsConfig {
     /// Deadline for one attempt.
     #[serde(with = "duration")]
     pub request_timeout: Duration,
+    /// Largest response body accepted, in bytes (REST).
+    #[serde(with = "size")]
+    pub max_response_size: u64,
     /// Retries for idempotent calls.
     pub retry: RetryConfig,
     /// Circuit breaker per connection.
@@ -155,6 +161,7 @@ impl Default for DefaultsConfig {
         Self {
             connect_timeout: Duration::from_secs(3),
             request_timeout: Duration::from_secs(5),
+            max_response_size: DEFAULT_MAX_RESPONSE_SIZE,
             retry: RetryConfig::default(),
             breaker: BreakerConfig::default(),
             auth: AuthConfig::Public,
@@ -362,6 +369,9 @@ pub struct ConnectionConfig {
     /// Overrides `defaults.request_timeout`.
     #[serde(with = "duration::option", skip_serializing_if = "Option::is_none")]
     pub request_timeout: Option<Duration>,
+    /// REST only: overrides `defaults.max_response_size`.
+    #[serde(with = "size::option", skip_serializing_if = "Option::is_none")]
+    pub max_response_size: Option<u64>,
     /// Overrides fields of `defaults.retry`.
     pub retry: Option<RetryOverride>,
     /// Overrides fields of `defaults.breaker`.

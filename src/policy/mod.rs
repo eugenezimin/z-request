@@ -57,6 +57,7 @@ pub fn outcome<T>(result: &Result<T, Error>) -> Option<Outcome> {
         | Error::WrongProtocol { .. }
         | Error::MissingUserCredentials { .. }
         | Error::InvalidCredentials { .. }
+        | Error::InvalidRequest { .. }
         | Error::AcquireTimeout { .. }
         | Error::PoolClosed { .. }
         | Error::CircuitOpen { .. } => None,
@@ -64,7 +65,7 @@ pub fn outcome<T>(result: &Result<T, Error>) -> Option<Outcome> {
 }
 
 /// The policies of one connection, to run calls with.
-pub struct Policies<'a, R: RetryPolicy, B: CircuitBreaker> {
+pub struct Policies<'a, R: RetryPolicy + ?Sized, B: CircuitBreaker + ?Sized> {
     /// The connection's retry policy.
     pub retry: &'a R,
     /// The breaker (it keeps a state per target).
@@ -73,7 +74,7 @@ pub struct Policies<'a, R: RetryPolicy, B: CircuitBreaker> {
     pub request_timeout: Duration,
 }
 
-impl<R: RetryPolicy, B: CircuitBreaker> fmt::Debug for Policies<'_, R, B> {
+impl<R: RetryPolicy + ?Sized, B: CircuitBreaker + ?Sized> fmt::Debug for Policies<'_, R, B> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Policies")
             .field("request_timeout", &self.request_timeout)
@@ -81,7 +82,7 @@ impl<R: RetryPolicy, B: CircuitBreaker> fmt::Debug for Policies<'_, R, B> {
     }
 }
 
-impl<R: RetryPolicy, B: CircuitBreaker> Policies<'_, R, B> {
+impl<R: RetryPolicy + ?Sized, B: CircuitBreaker + ?Sized> Policies<'_, R, B> {
     /// Runs one call to `target`, attempt by attempt:
     ///
     /// 1. the breaker admits it, or the call fails fast with [`Error::CircuitOpen`] (never

@@ -46,6 +46,15 @@ pub enum Error {
         /// What is wrong with the token.
         reason: String,
     },
+    /// The request cannot be sent as built: an invalid path or header, or a body that cannot
+    /// be encoded. Nothing was sent.
+    #[error("connection `{connection}`: invalid request: {reason}")]
+    InvalidRequest {
+        /// The connection's name.
+        connection: String,
+        /// What is wrong.
+        reason: String,
+    },
     /// No connection became free within `pool.acquire_timeout`.
     #[error("connection `{connection}`: no pooled connection free within {waited:?}")]
     AcquireTimeout {
@@ -147,6 +156,7 @@ impl Error {
             | Self::WrongProtocol { connection, .. }
             | Self::MissingUserCredentials { connection }
             | Self::InvalidCredentials { connection, .. }
+            | Self::InvalidRequest { connection, .. }
             | Self::AcquireTimeout { connection, .. }
             | Self::PoolClosed { connection }
             | Self::Connect { connection, .. }

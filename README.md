@@ -14,17 +14,17 @@ next to whatever credentials the connection uses. Services that authenticate to 
 their own secrets use it to trace each request back to the user or job that started it; it is
 never an authorization input.
 
-> **Status: build step 3 of 6.** Interfaces, errors, configuration, the connection pool, the
-> retry/breaker policies with the shared call loop, and credentials are in place. The REST and
-> gRPC transports follow. The pool needs a tokio runtime with time enabled.
+> **Status: build step 4 of 6.** Interfaces, errors, configuration, the connection pool, the
+> retry/breaker policies with the shared call loop, credentials and the REST transport are in
+> place. The gRPC transport follows. A tokio runtime with time enabled is required.
 
 ## Features
 
 | Feature | Gives |
 |---|---|
-| `rest` | REST transport (reqwest) |
+| `rest` | REST transport (reqwest, HTTP/1.1) |
 | `grpc` | gRPC transport (tonic) |
-| `tls` | `https://`, custom CAs, client certificates |
+| `tls` | `https://`, custom CAs, client certificates (rustls with `ring`, platform trust store) |
 | `yaml` | YAML configuration files |
 
 All four are on by default; `default-features = false` and pick what you need. The core compiles

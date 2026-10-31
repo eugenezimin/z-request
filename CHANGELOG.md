@@ -20,6 +20,17 @@
 - `Error::InvalidCredentials`: a caller's token that is empty or not visible ASCII is rejected
   rather than sent.
 
+- `rest` (feature `rest`): `RestConnector` and `RestConnection` (one reqwest client per pooled
+  connection, keeping one socket, so the pool's limits count real sockets; no redirects, no
+  proxies, no retries of its own), and `RestClient` with `RestRequest`/`RestResponse` (credentials,
+  trace headers and fixed headers on every request, retries through `Policies::run`, responses
+  read in full up to `max_response_size`, paths kept below the base path).
+- HTTPS (feature `tls`): rustls with `ring`, servers verified against the platform's trust store
+  plus `tls.ca_file`, client certificates for mTLS, and `tls.server_name`.
+- Configuration: `max_response_size` (default `10MiB`, overridable per connection) and the `size`
+  format (`512KiB`, `10MiB`, `5MB`).
+- `Error::InvalidRequest`: a request that cannot be sent as built (path, header, body).
+
 ### Changed
 - Configuration: an `env`/`mixed` secret that is not visible ASCII is rejected.
 - `Initiator` (`user:<id>` / `service:<name>`), carried in `TraceContext` and sent as
@@ -28,6 +39,8 @@
 ### Dependencies
 - `tokio` (features `rt`, `sync`, `time`).
 - `fastrand`, for retry jitter.
+- `reqwest` (feature `rest`, no default features), `bytes`; `rustls` (`ring`) and
+  `rustls-platform-verifier` (feature `tls`).
 
 ## [0.1.0] - 2026-10-29
 

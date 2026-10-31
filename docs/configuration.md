@@ -39,7 +39,8 @@ waits.
 | Field | Default | Meaning |
 |---|---|---|
 | `connect_timeout` | `3s` | Time allowed to open a connection, including TLS. |
-| `request_timeout` | `5s` | Deadline for one attempt (sent as `grpc-timeout` for gRPC). |
+| `request_timeout` | `5s` | Deadline for one attempt (sent as `grpc-timeout` for gRPC). For REST it covers sending the request and reading the whole response. |
+| `max_response_size` | `10MiB` | REST only: the largest response body accepted; a larger one fails the call with `Decode`. A size with a unit: `512KiB`, `10MiB`, `5MB`. |
 | `retry.max_attempts` | `3` | Total attempts counting the first; `1` never retries. Only retryable errors are retried, and only for idempotent calls, except a failed connect: the request was never sent, so any call is retried. |
 | `retry.backoff.initial` / `max` | `100ms` / `2s` | First wait, and the cap on any wait. |
 | `retry.backoff.multiplier` | `2.0` | Each wait is the previous one times this (at least `1.0`). |
@@ -58,12 +59,12 @@ The name (lower-case letters, digits, `_`, starting with a letter) is what code 
 | `protocol` | yes | `grpc` or `rest`. The matching feature must be compiled in. |
 | `endpoint` | yes | `http(s)://host[:port]`; for REST also a base path (`https://host/api`). gRPC endpoints have no path. |
 | `min`, `max` | no | This connection's own limits, always per connection. Under `per_uri` they replace `pool.min`/`pool.max`; under `total` they bound this connection inside the pool total (default `0` / `unlimited`). |
-| `connect_timeout`, `request_timeout` | no | Override `defaults`. |
+| `connect_timeout`, `request_timeout`, `max_response_size` | no | Override `defaults`. |
 | `retry`, `breaker` | no | Override `defaults` field by field (e.g. only `retry.max_attempts`). |
 | `auth` | no | Overrides `defaults.auth`. |
 | `tls.ca_file` | no | Extra CA certificate to trust (PEM). `https://` endpoints only. |
 | `tls.client_cert_file`, `tls.client_key_file` | no, as a pair | Client certificate for mTLS. |
-| `tls.server_name` | no | Name expected on the server certificate, if it differs from the host. |
+| `tls.server_name` | no | Name expected on the server certificate, if it differs from the host. The connection still goes to the endpoint's host; the name is also sent as SNI and, for REST, as `Host`. |
 | `headers` | no | REST only: fixed headers on every request. `authorization`, `traceparent`, `tracestate`, `x-request-id` and `x-initiator` are reserved. |
 
 Each connection counts as one URI for the limits; two connections with the same endpoint are
@@ -113,6 +114,21 @@ booleans are read as such. Examples with the prefix `COUNTERPARTIES`:
 
 A connection can be defined from env vars alone.
 
+## REST
+
+Each pooled REST connection is one HTTP/1.1 socket, so `pool.min`, `max` and `hold` count real
+sockets. Redirects are not followed (a 3xx fails the call with `Http`, so a redirect can never
+carry the caller's token elsewhere), proxy settings (`HTTP_PROXY`, …) are ignored, and HTTPS
+servers are verified against the platform's trust store plus `tls.ca_file`.
+
+A request path is joined to the endpoint's base path and can never leave it: it must start with
+`/`, and `.`/`..` segments (also percent-encoded) are rejected.
+
+## Sizes
+
+Text with a unit: `512B`, `64KiB`, `10MiB`, `1GiB` (binary) or `10KB`, `5MB`, `1GB` (decimal). A
+bare number (`1024`) is rejected.
+
 ## Durations
 
 Text with a unit: `100ms`, `2s`, `5m`, `1h`, `1m30s`. A bare number (`30`) is rejected.
@@ -122,7 +138,7 @@ Text with a unit: `100ms`, `2s`, `5m`, `1h`, `1m30s`. A bare number (`30`) is re
 Structural (`load`): unknown sections or keys, wrong types, invalid durations, malformed `auth`.
 
 Semantic (`resolve`):
-- `pool.hold` outside 0–60 s; zero timeouts; `min > max` (pool or connection);
+- `pool.hold` outside 0–60 s; zero timeouts or `max_response_size`; `min > max` (pool or connection);
 - under `total`, the connections' own `min` adding up to more than `pool.max`;
 - connection names, missing `protocol`/`endpoint`, malformed endpoints, a protocol or `https`
   without its feature, a path on a gRPC endpoint;

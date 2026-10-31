@@ -116,6 +116,7 @@ impl CircuitBreaker for ConsecutiveFailures {
             return;
         };
         let mut state = entry.lock();
+        let before = *state;
         let reopen = || State::Open {
             until: Instant::now() + entry.open_for,
         };
@@ -132,6 +133,21 @@ impl CircuitBreaker for ConsecutiveFailures {
             (Outcome::Failure, State::HalfOpen { .. }) => reopen(),
             (Outcome::Failure, open @ State::Open { .. }) => open,
         };
+        let after = *state;
+        drop(state);
+        match (before, after) {
+            (State::Closed { .. } | State::HalfOpen { .. }, State::Open { .. }) => {
+                tracing::warn!(
+                    connection = target.name(),
+                    open_for_ms = u64::try_from(entry.open_for.as_millis()).unwrap_or(u64::MAX),
+                    "circuit breaker opened"
+                );
+            }
+            (State::Open { .. } | State::HalfOpen { .. }, State::Closed { .. }) => {
+                tracing::info!(connection = target.name(), "circuit breaker closed");
+            }
+            _ => {}
+        }
     }
 }
 

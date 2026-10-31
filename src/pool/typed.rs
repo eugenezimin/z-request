@@ -573,6 +573,8 @@ impl ConnectionPool {
             }
             for c in connections {
                 let target = c.target();
+                let idx = st.targets.len();
+                let gauges = super::core::PoolGauges::new(&target);
                 index.insert(
                     target.clone(),
                     LocalTarget {
@@ -588,7 +590,10 @@ impl ConnectionPool {
                     counts: Default::default(),
                     next_seq: 0,
                     store: Box::new(Store::<K::Conn>::new(c.max)),
+                    gauges,
+                    dirty: false,
                 });
+                st.mark(idx); // report the zeros from the start
             }
         }
         Ok(TypedPool(Arc::new_cyclic(|me| TypedInner {

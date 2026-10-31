@@ -67,6 +67,11 @@ impl Target {
     pub fn endpoint(&self) -> &str {
         &self.endpoint
     }
+
+    /// The name, shared rather than copied (for metric labels).
+    pub(crate) fn shared_name(&self) -> Arc<str> {
+        Arc::clone(&self.name)
+    }
 }
 
 /// A secret value (a token or a service secret). `Debug` and `Display` never show it.

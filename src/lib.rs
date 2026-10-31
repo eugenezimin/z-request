@@ -8,13 +8,19 @@
 //! passes the user's (z-auth-verified) token in a [`CallContext`], and can hand a dedicated gRPC
 //! channel to z-event's subscriber.
 //!
-//! ## Status
+//! ## Overview
 //!
-//! Build step 5 of 6: interfaces ([`spi`]), errors, configuration, the connection [`pool`], the
-//! retry/breaker [`policy`] with the shared call loop, [`credentials`], and the REST (`rest`) and
-//! gRPC (`grpc`) transports. One build step remains.
+//! - [`config`]: the configuration, from YAML and env vars, validated and resolved.
+//! - [`Connections`]: every configured connection, built in one call; hands out the REST and
+//!   gRPC clients by name, and shuts everything down.
+//! - [`pool`]: the one connection pool all connections share.
+//! - [`policy`]: retries, circuit breaking, and the call loop both transports use.
+//! - [`credentials`]: what each call sends, and the headers that carry it.
+//! - `rest` and `grpc`: the transports.
+//! - [`telemetry`]: spans and metrics, through the `tracing` and `metrics` facades.
+//! - [`spi`]: the interfaces every part implements, to replace any of them.
 //!
-//! The pool needs a tokio runtime with time enabled.
+//! A tokio runtime with time enabled is required.
 //!
 //! ## Features
 //!
@@ -26,6 +32,7 @@
 //! All four are on by default.
 
 pub mod config;
+mod connections;
 pub mod credentials;
 #[cfg(feature = "grpc")]
 pub mod grpc;
@@ -33,12 +40,14 @@ pub mod policy;
 pub mod pool;
 #[cfg(feature = "rest")]
 pub mod rest;
+pub mod telemetry;
 #[cfg(test)]
 mod test_support;
 #[cfg(all(feature = "tls", any(feature = "rest", feature = "grpc")))]
 mod tls;
 mod utils;
 
+pub use connections::{Connections, ConnectionsBuilder};
 pub use credentials::AuthResolver;
 pub use policy::{BreakerState, ConsecutiveFailures, ExponentialBackoff, Policies};
 pub use pool::{ConnectionPool, ConnectionPoolBuilder, LruEviction, TargetStats, TypedPool};

@@ -14,9 +14,57 @@ next to whatever credentials the connection uses. Services that authenticate to 
 their own secrets use it to trace each request back to the user or job that started it; it is
 never an authorization input.
 
-> **Status: build step 5 of 6.** Interfaces, errors, configuration, the connection pool, the
-> retry/breaker policies with the shared call loop, credentials, and the REST and gRPC transports
-> are in place; one build step remains. A tokio runtime with time enabled is required.
+> **Status: all 6 build steps are in place** (unreleased since 0.1.0): configuration, the shared
+> pool, retries and circuit breaking, credentials, the REST and gRPC transports, the
+> `Connections` composition root, and telemetry. A tokio runtime with time enabled is required.
+
+## Usage
+
+```rust,ignore
+use z_request::config::ConfigSource;
+use z_request::{CallContext, Connections, Initiator, TraceContext};
+
+// At startup (after installing your tracing subscriber and metrics recorder):
+let resolved = ConfigSource::new()
+    .yaml_file("config/clients.yaml")?
+    .with_env("COUNTERPARTIES")
+    .load()?
+    .resolve()?;
+let connections = Connections::build(&resolved)?;
+
+// Per call, with the inbound request's token and trace context:
+let ctx = CallContext::user(token, TraceContext {
+    traceparent, tracestate, request_id,
+    initiator: Some(Initiator::user(&user_id)?),
+});
+
+// REST
+let entry: Entry = connections.rest("registry")?.get("/entries/42").send_json(&ctx).await?;
+
+// gRPC, with any generated client
+let user = connections
+    .grpc("users")?
+    .call(&ctx, true, |channel| async move {
+        UsersClient::new(channel).get_user(GetUser { id: 42 }).await
+    })
+    .await?
+    .into_inner();
+
+// A dedicated channel for a long-lived stream (e.g. z-event's subscriber)
+let channel = connections.grpc("events")?.dedicated(&ctx).await?;
+
+// On shutdown
+connections.close().await;
+```
+
+## Telemetry
+
+Through the `tracing` and `metrics` facades only; install whatever subscriber and recorder you
+use (before `Connections::build`), or nothing. Every call runs in a `z_request.call` span and is
+counted in `z_request_calls_total`, `z_request_call_duration_seconds` and
+`z_request_retries_total`; the pool reports `z_request_pool_connections` and
+`z_request_pool_waiting`. Labels are bounded (`connection`, `protocol`, `result`, `auth`,
+`state`); credentials are never recorded. See the `telemetry` module for the details.
 
 ## Features
 

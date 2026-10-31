@@ -2,7 +2,8 @@
 //! and the policies.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
@@ -10,12 +11,14 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Method, StatusCode, Url};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use tracing::Instrument;
 
 use super::connector::{RestConnection, RestConnector};
 use crate::config::ConnectionSettings;
 use crate::credentials::{AUTHORIZATION, RESERVED_HEADERS, outbound_headers};
 use crate::policy::{ExponentialBackoff, Policies};
 use crate::pool::TypedPool;
+use crate::telemetry::{CallTelemetry, UNRESOLVED, error_status};
 use crate::utils::error::error_text;
 use crate::utils::error::{ConfigError, Error};
 use crate::utils::spi::{
@@ -320,6 +323,30 @@ impl RestRequest {
     /// [`Error::Decode`] for a body larger than `max_response_size`; the credentials, pool,
     /// breaker, timeout and transport errors of [`Policies::run`].
     pub async fn send(self, ctx: &CallContext) -> Result<RestResponse, Error> {
+        let telemetry = CallTelemetry::start(&self.client.0.target, "rest");
+        telemetry.span().record("method", self.method.as_str());
+        telemetry.span().record("path", self.path.as_str());
+        let (auth, attempts) = (OnceLock::new(), AtomicU32::new(0));
+        let result = self
+            .exchange_all(ctx, &auth, &attempts)
+            .instrument(telemetry.span().clone())
+            .await;
+        let status = match &result {
+            Ok(response) => Some(i64::from(response.status())),
+            Err(e) => error_status(e),
+        };
+        let auth = auth.get().copied().unwrap_or(UNRESOLVED);
+        telemetry.finish(auth, attempts.load(Ordering::Relaxed), status, &result);
+        result
+    }
+
+    /// `send` without the telemetry: notes what was sent in `auth` and the attempts made.
+    async fn exchange_all(
+        self,
+        ctx: &CallContext,
+        auth: &OnceLock<&'static str>,
+        attempts: &AtomicU32,
+    ) -> Result<RestResponse, Error> {
         let inner = &*self.client.0;
         let connection = inner.target.name();
         let invalid = |reason: String| Error::InvalidRequest {
@@ -331,6 +358,7 @@ impl RestRequest {
         }
         let url = inner.url(&self.path, &self.query).map_err(invalid)?;
         let sent = inner.auth.resolve(&inner.target, ctx)?;
+        let _ = auth.set(sent.kind());
 
         let mut headers = inner.headers.clone();
         headers.extend(self.headers);
@@ -348,16 +376,22 @@ impl RestRequest {
         };
         let (method, body, limit) = (&self.method, &self.body, inner.max_response_size);
         policies
-            .run(&inner.pool, &inner.target, self.idempotent, |lease, _| {
-                let mut request = lease
-                    .client()
-                    .request(method.clone(), url.clone())
-                    .headers(headers.clone());
-                if let Some(body) = body {
-                    request = request.body(body.clone());
-                }
-                exchange(lease, request, limit, connection)
-            })
+            .run(
+                &inner.pool,
+                &inner.target,
+                self.idempotent,
+                |lease, attempt| {
+                    attempts.store(attempt, Ordering::Relaxed);
+                    let mut request = lease
+                        .client()
+                        .request(method.clone(), url.clone())
+                        .headers(headers.clone());
+                    if let Some(body) = body {
+                        request = request.body(body.clone());
+                    }
+                    exchange(lease, request, limit, connection)
+                },
+            )
             .await
     }
 

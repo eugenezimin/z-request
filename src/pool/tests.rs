@@ -149,6 +149,7 @@ fn conn(name: &str, min: u32, max: Limit) -> ConnectionSettings {
         min,
         max,
         connect_timeout: CONNECT,
+        max_response_size: crate::config::DEFAULT_MAX_RESPONSE_SIZE,
         request_timeout: Duration::from_secs(5),
         retry: RetryConfig::default(),
         breaker: BreakerConfig::default(),

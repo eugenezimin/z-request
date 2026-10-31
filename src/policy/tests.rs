@@ -83,6 +83,10 @@ fn outcomes_blame_the_peer_only_for_its_own_failures() {
             reason(|connection, reason| Error::InvalidCredentials { connection, reason }),
             None,
         ),
+        (
+            reason(|connection, reason| Error::InvalidRequest { connection, reason }),
+            None,
+        ),
     ];
     for (error, expected) in cases {
         let text = error.to_string();

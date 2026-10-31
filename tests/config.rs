@@ -431,3 +431,44 @@ fn the_shipped_example_file_resolves() {
         .unwrap();
     assert_eq!(r.connections.len(), 2);
 }
+
+#[cfg(feature = "rest")]
+#[test]
+fn max_response_size_is_a_size_with_a_unit() {
+    assert_eq!(
+        ZRequestConfig::default().defaults.max_response_size,
+        z_request::config::DEFAULT_MAX_RESPONSE_SIZE
+    );
+    let c: ZRequestConfig = serde_json::from_value(serde_json::json!({
+        "defaults": { "max_response_size": "64KiB" },
+        "connections": {
+            "small": { "protocol": "rest", "endpoint": "http://a" },
+            "large": { "protocol": "rest", "endpoint": "http://b", "max_response_size": "5MB" },
+        },
+    }))
+    .unwrap();
+    let r = c.resolve_with(secrets).unwrap();
+    let size = |name: &str| {
+        r.connections
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.max_response_size)
+    };
+    assert_eq!(
+        (size("small"), size("large")),
+        (Some(65_536), Some(5_000_000))
+    );
+
+    let bare = serde_json::from_value::<ZRequestConfig>(serde_json::json!({
+        "defaults": { "max_response_size": 1024 }
+    }));
+    assert!(bare.unwrap_err().to_string().contains("no unit"));
+
+    let mut zero = c.clone();
+    zero.defaults.max_response_size = 0;
+    let e = zero.resolve_with(secrets).unwrap_err();
+    assert!(
+        has(&e, "defaults.max_response_size: must be greater than 0B"),
+        "{e}"
+    );
+}

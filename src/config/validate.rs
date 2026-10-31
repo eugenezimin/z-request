@@ -7,21 +7,12 @@ use crate::config::model::{
     AuthConfig, BackoffConfig, BreakerConfig, ConnectionConfig, Limit, RetryConfig, Scope,
     TlsConfig, ZRequestConfig,
 };
-use crate::credentials::{AUTHORIZATION, REQUEST_ID, TRACEPARENT, TRACESTATE, is_header_safe};
+use crate::credentials::{RESERVED_HEADERS, is_header_safe};
 use crate::utils::error::{ConfigError, Problem};
-use crate::utils::spi::{INITIATOR_HEADER, Protocol, Secret, Target};
+use crate::utils::spi::{Protocol, Secret, Target};
 
 /// The longest `pool.hold` allowed.
 pub const MAX_HOLD: Duration = Duration::from_secs(60);
-
-/// Headers z-request sets itself; configuring them is an error.
-const RESERVED_HEADERS: [&str; 5] = [
-    AUTHORIZATION,
-    TRACEPARENT,
-    TRACESTATE,
-    REQUEST_ID,
-    INITIATOR_HEADER,
-];
 
 /// A validated configuration, ready for building pools and connections.
 #[derive(Debug, Clone)]
@@ -105,6 +96,8 @@ pub struct ConnectionSettings {
     pub connect_timeout: Duration,
     /// Deadline per attempt.
     pub request_timeout: Duration,
+    /// REST only: the largest response body accepted, in bytes.
+    pub max_response_size: u64,
     /// Retry settings.
     pub retry: RetryConfig,
     /// Breaker settings.
@@ -156,6 +149,9 @@ impl ZRequestConfig {
         let d = &self.defaults;
         positive(&mut p, "defaults.connect_timeout", d.connect_timeout);
         positive(&mut p, "defaults.request_timeout", d.request_timeout);
+        if d.max_response_size == 0 {
+            p.add("defaults.max_response_size", "must be greater than 0B");
+        }
         check_retry(&mut p, "defaults.retry", &d.retry);
         check_breaker(&mut p, "defaults.breaker", &d.breaker);
 
@@ -349,6 +345,10 @@ fn resolve_connection(
     let request_timeout = c.request_timeout.unwrap_or(d.request_timeout);
     positive(p, &at("connect_timeout"), connect_timeout);
     positive(p, &at("request_timeout"), request_timeout);
+    let max_response_size = c.max_response_size.unwrap_or(d.max_response_size);
+    if c.max_response_size == Some(0) {
+        p.add(at("max_response_size"), "must be greater than 0B");
+    }
 
     let mut retry = d.retry.clone();
     if let Some(o) = &c.retry {
@@ -445,6 +445,7 @@ fn resolve_connection(
         max,
         connect_timeout,
         request_timeout,
+        max_response_size,
         retry,
         breaker,
         auth: auth?,

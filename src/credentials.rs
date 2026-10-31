@@ -22,6 +22,15 @@ pub const TRACESTATE: &str = "tracestate";
 /// The request id header.
 pub const REQUEST_ID: &str = "x-request-id";
 
+/// Headers z-request sets itself on every call; configuring or adding them is an error.
+pub(crate) const RESERVED_HEADERS: [&str; 5] = [
+    AUTHORIZATION,
+    TRACEPARENT,
+    TRACESTATE,
+    REQUEST_ID,
+    INITIATOR_HEADER,
+];
+
 /// Whether `token` can be sent as a bearer token: 1 or more visible ASCII characters (no
 /// spaces, no control characters, nothing outside ASCII).
 pub fn is_header_safe(token: &str) -> bool {

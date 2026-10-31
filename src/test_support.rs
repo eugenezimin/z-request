@@ -23,6 +23,7 @@ pub(crate) fn connection(name: &str) -> ConnectionSettings {
         min: 0,
         max: Limit::Finite(1),
         connect_timeout: Duration::from_secs(1),
+        max_response_size: crate::config::DEFAULT_MAX_RESPONSE_SIZE,
         request_timeout: Duration::from_secs(1),
         retry: RetryConfig::default(),
         breaker: BreakerConfig::default(),

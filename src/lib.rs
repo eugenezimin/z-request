@@ -10,15 +10,15 @@
 //!
 //! ## Status
 //!
-//! Build step 3 of 6: interfaces ([`spi`]), errors, configuration, the connection [`pool`], the
-//! retry/breaker [`policy`] with the shared call loop, and [`credentials`]. The REST and gRPC
-//! transports follow.
+//! Build step 4 of 6: interfaces ([`spi`]), errors, configuration, the connection [`pool`], the
+//! retry/breaker [`policy`] with the shared call loop, [`credentials`], and the REST transport
+//! (`rest`). The gRPC transport follows.
 //!
 //! The pool needs a tokio runtime with time enabled.
 //!
 //! ## Features
 //!
-//! - `rest`: REST transport (reqwest).
+//! - `rest`: REST transport (reqwest, HTTP/1.1): the `rest` module.
 //! - `grpc`: gRPC transport (tonic).
 //! - `tls`: `https://` endpoints, custom CAs, client certificates.
 //! - `yaml`: YAML configuration files (`ConfigSource::yaml_file` / `yaml_str`).
@@ -29,6 +29,8 @@ pub mod config;
 pub mod credentials;
 pub mod policy;
 pub mod pool;
+#[cfg(feature = "rest")]
+pub mod rest;
 #[cfg(test)]
 mod test_support;
 mod utils;

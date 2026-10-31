@@ -3,7 +3,8 @@
 
 use std::fmt;
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use tonic::Status;
@@ -11,12 +12,14 @@ use tonic::metadata::{AsciiMetadataKey, AsciiMetadataValue};
 use tonic::service::Interceptor;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
+use tracing::Instrument;
 
 use super::connector::{GrpcConnection, GrpcConnector};
 use crate::config::ConnectionSettings;
 use crate::credentials::outbound_headers;
 use crate::policy::{ExponentialBackoff, Policies, outcome};
 use crate::pool::TypedPool;
+use crate::telemetry::{CallTelemetry, UNRESOLVED, error_status};
 use crate::utils::error::{Error, error_text};
 use crate::utils::spi::{
     CallContext, CircuitBreaker, CredentialsResolver, Lease, Pool, Protocol, RetryPolicy, Target,
@@ -159,14 +162,43 @@ impl GrpcClient {
         &self,
         ctx: &CallContext,
         idempotent: bool,
+        call: F,
+    ) -> Result<T, Error>
+    where
+        F: FnMut(GrpcChannel) -> Fut,
+        Fut: Future<Output = Result<T, Status>>,
+    {
+        let telemetry = CallTelemetry::start(&self.0.target, "grpc");
+        let (auth, attempts) = (OnceLock::new(), AtomicU32::new(0));
+        let result = self
+            .call_all(ctx, idempotent, call, &auth, &attempts)
+            .instrument(telemetry.span().clone())
+            .await;
+        let status = match &result {
+            Ok(_) => Some(0),
+            Err(e) => error_status(e),
+        };
+        let auth = auth.get().copied().unwrap_or(UNRESOLVED);
+        telemetry.finish(auth, attempts.load(Ordering::Relaxed), status, &result);
+        result
+    }
+
+    /// `call` without the telemetry: notes what was sent in `auth` and the attempts made.
+    async fn call_all<T, F, Fut>(
+        &self,
+        ctx: &CallContext,
+        idempotent: bool,
         mut call: F,
+        auth: &OnceLock<&'static str>,
+        attempts: &AtomicU32,
     ) -> Result<T, Error>
     where
         F: FnMut(GrpcChannel) -> Fut,
         Fut: Future<Output = Result<T, Status>>,
     {
         let inner = &*self.0;
-        let metadata = inner.metadata(ctx, Some(inner.request_timeout))?;
+        let (metadata, sent) = inner.metadata(ctx, Some(inner.request_timeout))?;
+        let _ = auth.set(sent);
         let (connection, timeout) = (inner.target.name(), inner.request_timeout);
         let policies = Policies {
             retry: &*inner.retry,
@@ -174,7 +206,8 @@ impl GrpcClient {
             request_timeout: inner.request_timeout,
         };
         policies
-            .run(&inner.pool, &inner.target, idempotent, |lease, _| {
+            .run(&inner.pool, &inner.target, idempotent, |lease, attempt| {
+                attempts.store(attempt, Ordering::Relaxed);
                 let attempt = call(InterceptedService::new(
                     lease.channel().clone(),
                     metadata.clone(),
@@ -201,13 +234,18 @@ impl GrpcClient {
     /// `grpc-timeout` is sent. The breaker is checked once; nothing is retried.
     pub async fn dedicated(&self, ctx: &CallContext) -> Result<DedicatedChannel, Error> {
         let inner = &*self.0;
-        let metadata = inner.metadata(ctx, None)?;
+        let (metadata, _) = inner.metadata(ctx, None)?;
         inner.breaker.admit(&inner.target)?;
         let lease = inner.pool.acquire(&inner.target).await;
         if let Some(o) = outcome(&lease) {
             inner.breaker.record(&inner.target, o);
         }
         let lease = lease?;
+        tracing::debug!(
+            connection = inner.target.name(),
+            slot = lease.slot().0,
+            "dedicated gRPC channel handed out"
+        );
         Ok(DedicatedChannel {
             channel: InterceptedService::new(lease.channel().clone(), metadata),
             lease,
@@ -218,11 +256,12 @@ impl GrpcClient {
 impl Inner {
     /// The call's metadata: the credentials its auth mode allows, the trace context and the
     /// initiator.
+    /// Also returns what the credentials are (`none`, `user`, `secret`), for telemetry.
     fn metadata(
         &self,
         ctx: &CallContext,
         timeout: Option<Duration>,
-    ) -> Result<CallMetadata, Error> {
+    ) -> Result<(CallMetadata, &'static str), Error> {
         let sent = self.auth.resolve(&self.target, ctx)?;
         let entries = outbound_headers(&sent, ctx.trace())
             .filter_map(|(name, value)| {
@@ -231,7 +270,7 @@ impl Inner {
                     .map(|value| (AsciiMetadataKey::from_static(name), value))
             })
             .collect();
-        Ok(CallMetadata { entries, timeout })
+        Ok((CallMetadata { entries, timeout }, sent.kind()))
     }
 }
 

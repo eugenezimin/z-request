@@ -197,6 +197,40 @@ pub(crate) struct TargetState {
     /// The next slot sequence number.
     pub(crate) next_seq: u64,
     pub(crate) store: Box<dyn TargetStore>,
+    /// The counts as metrics, set when the lock is released.
+    pub(crate) gauges: PoolGauges,
+    /// The counts changed since the gauges were last set.
+    pub(crate) dirty: bool,
+}
+
+/// One target's pool gauges ([`telemetry`](crate::telemetry)).
+pub(crate) struct PoolGauges {
+    busy: metrics::Gauge,
+    idle: metrics::Gauge,
+    connecting: metrics::Gauge,
+    waiting: metrics::Gauge,
+}
+
+impl PoolGauges {
+    /// Registers the gauges of `target` with the installed recorder.
+    pub(crate) fn new(target: &Target) -> Self {
+        use crate::telemetry::{POOL_CONNECTIONS, POOL_WAITING};
+        let connection = metrics::SharedString::from(target.shared_name());
+        let state = |state: &'static str| metrics::gauge!(POOL_CONNECTIONS, "connection" => connection.clone(), "state" => state);
+        Self {
+            busy: state("busy"),
+            idle: state("idle"),
+            connecting: state("connecting"),
+            waiting: metrics::gauge!(POOL_WAITING, "connection" => connection.clone()),
+        }
+    }
+
+    fn set(&self, c: Counts) {
+        self.busy.set(f64::from(c.busy));
+        self.idle.set(f64::from(c.idle));
+        self.connecting.set(f64::from(c.connecting));
+        self.waiting.set(f64::from(c.waiting));
+    }
 }
 
 /// Everything behind the lock.
@@ -210,6 +244,8 @@ pub(crate) struct State {
     pub(crate) next_ticket: u64,
     /// When the reaper will look next; `None` while it waits for a notification.
     pub(crate) reaper_wake: Option<Instant>,
+    /// Targets whose counts changed in this locked section.
+    pub(crate) dirty: Vec<usize>,
 }
 
 impl State {
@@ -219,6 +255,27 @@ impl State {
             f(&mut ts.counts);
         }
         f(&mut self.totals);
+        self.mark(t);
+    }
+
+    /// Notes that target `t`'s counts changed, so its gauges are set on unlock.
+    pub(crate) fn mark(&mut self, t: usize) {
+        if let Some(ts) = self.targets.get_mut(t)
+            && !ts.dirty
+        {
+            ts.dirty = true;
+            self.dirty.push(t);
+        }
+    }
+
+    /// Sets the gauges of the targets whose counts changed.
+    fn publish(&mut self) {
+        for t in self.dirty.drain(..) {
+            if let Some(ts) = self.targets.get_mut(t) {
+                ts.dirty = false;
+                ts.gauges.set(ts.counts);
+            }
+        }
     }
 
     /// Takes the next slot id of target `t`.
@@ -370,7 +427,8 @@ thread_local! {
     static IN_LOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// The locked state. In test builds, releasing it checks the pool's invariants.
+/// The locked state. Releasing it sets the gauges of the targets that changed and, in test
+/// builds, checks the pool's invariants.
 pub(crate) struct Locked<'a> {
     guard: MutexGuard<'a, State>,
     #[cfg(test)]
@@ -391,13 +449,18 @@ impl DerefMut for Locked<'_> {
     }
 }
 
-#[cfg(test)]
 impl Drop for Locked<'_> {
     fn drop(&mut self) {
-        if !std::thread::panicking() {
-            self.core.check_invariants(&self.guard);
+        if !self.guard.dirty.is_empty() {
+            self.guard.publish();
         }
-        IN_LOCK.with(|f| f.set(false));
+        #[cfg(test)]
+        {
+            if !std::thread::panicking() {
+                self.core.check_invariants(&self.guard);
+            }
+            IN_LOCK.with(|f| f.set(false));
+        }
     }
 }
 
@@ -442,6 +505,7 @@ impl Core {
                 totals: Counts::default(),
                 next_ticket: 0,
                 reaper_wake: None,
+                dirty: Vec::new(),
             }),
             scope: settings.scope,
             global_min,
@@ -574,13 +638,17 @@ impl Core {
     pub(crate) fn has_servable_waiters(&self, st: &mut State) -> bool {
         let mut pruned = 0;
         let mut found = false;
-        for ts in &mut st.targets {
+        for (i, ts) in st.targets.iter_mut().enumerate() {
             if ts.counts.waiting == 0 || !ts.max.allows(ts.counts.used()) {
                 continue;
             }
             let (head, dropped) = ts.store.live_head();
             ts.counts.waiting -= dropped;
             pruned += dropped;
+            if dropped > 0 && !ts.dirty {
+                ts.dirty = true;
+                st.dirty.push(i);
+            }
             if head.is_some() {
                 found = true;
                 break;
@@ -632,6 +700,10 @@ impl Core {
                     let (head, dropped) = ts.store.live_head();
                     ts.counts.waiting -= dropped;
                     pruned += dropped;
+                    if dropped > 0 && !ts.dirty {
+                        ts.dirty = true;
+                        st.dirty.push(i);
+                    }
                     if let Some(ticket) = head
                         && best.is_none_or(|(b, _)| ticket < b)
                     {
@@ -885,11 +957,15 @@ impl ConnectionPool {
                 return;
             }
             st.closed = true;
-            for ts in &mut st.targets {
+            for (i, ts) in st.targets.iter_mut().enumerate() {
                 ts.store.drain_idle(&mut closes, ts.connect_timeout);
                 ts.store.drop_waiters();
                 ts.counts.idle = 0;
                 ts.counts.waiting = 0;
+                if !ts.dirty {
+                    ts.dirty = true;
+                    st.dirty.push(i);
+                }
             }
             st.totals.idle = 0;
             st.totals.waiting = 0;

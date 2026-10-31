@@ -136,6 +136,13 @@ impl<R: RetryPolicy + ?Sized, B: CircuitBreaker + ?Sized> Policies<'_, R, B> {
             };
             match self.retry.next_delay(attempt, &error, idempotent) {
                 Some(delay) => {
+                    tracing::debug!(
+                        connection = target.name(),
+                        attempt,
+                        delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                        error = %error,
+                        "retrying"
+                    );
                     sleep(delay).await;
                     attempt += 1;
                 }

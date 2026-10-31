@@ -31,6 +31,8 @@ yaml = ["dep:serde-saphyr"]
 bytes = { version = "1", optional = true }
 # Retry jitter (not security-sensitive).
 fastrand = "2.5"
+# Telemetry through the facades only: the host installs a recorder / subscriber, or nothing.
+metrics = "0.24"
 reqwest = { version = "0.13", default-features = false, optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 rustls-platform-verifier = { version = "0.7", optional = true }
@@ -39,11 +41,15 @@ serde_json = "1"
 serde-saphyr = { version = "2", optional = true }
 thiserror = "2"
 tonic = { version = "0.14", default-features = false, features = ["channel"], optional = true }
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 # The pool's waiting, timers and background closing. `rt` for `Handle`, `time` for timeouts and
 # the hold timer, `sync` for handing connections to waiting requests.
 tokio = { version = "1.54", default-features = false, features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
+# Records metrics and spans in tests.
+metrics-util = { version = "0.20", default-features = false, features = ["debugging"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
 # Test certificates for the TLS tests.
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 # A gRPC service (health checking) to test against, with a server.

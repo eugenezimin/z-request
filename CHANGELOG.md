@@ -39,6 +39,16 @@
   the tonic version used.
 - HTTPS for gRPC (feature `tls`): the same platform verifier and `tls.ca_file`, mTLS and
   `tls.server_name`.
+- `Connections`, the composition root: `Connections::build(&resolved)` builds every connection
+  (one shared pool, connectors, `AuthResolver`, `ConsecutiveFailures`), hands out
+  `rest(name)` / `grpc(name)` clients, and shuts down with `close()`. `ConnectionsBuilder`
+  replaces the eviction policy, the credentials resolver or the breaker.
+- `telemetry`: a `z_request.call` span per call (connection, protocol, method, path, auth,
+  attempts, result, status, error), retry and breaker events, and metrics through the `metrics`
+  facade: `z_request_calls_total`, `z_request_call_duration_seconds`, `z_request_retries_total`,
+  `z_request_pool_connections`, `z_request_pool_waiting`, with bounded labels. No subscriber,
+  recorder or exporter is installed.
+- `Error::kind()`: a short, stable name for each error (the `result` label).
 
 ### Changed
 - Configuration: an `env`/`mixed` secret that is not visible ASCII is rejected.
@@ -51,6 +61,7 @@
 - `reqwest` (feature `rest`, no default features), `bytes`; `tonic` (feature `grpc`, `channel`
   only); `rustls` (`ring`) and `rustls-platform-verifier` (feature `tls`, which also enables
   tonic's `tls-ring`).
+- `tracing` and `metrics` (facades only).
 
 ## [0.1.0] - 2026-10-29
 

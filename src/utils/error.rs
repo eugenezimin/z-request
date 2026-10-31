@@ -148,6 +148,28 @@ impl Error {
         }
     }
 
+    /// A short, stable name for the kind of error, e.g. `timeout` or `http`: the `result`
+    /// label on metrics and the `result` field on spans.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Config(_) => "config",
+            Self::UnknownConnection { .. } => "unknown_connection",
+            Self::WrongProtocol { .. } => "wrong_protocol",
+            Self::MissingUserCredentials { .. } => "missing_credentials",
+            Self::InvalidCredentials { .. } => "invalid_credentials",
+            Self::InvalidRequest { .. } => "invalid_request",
+            Self::AcquireTimeout { .. } => "acquire_timeout",
+            Self::PoolClosed { .. } => "pool_closed",
+            Self::Connect { .. } => "connect",
+            Self::Timeout { .. } => "timeout",
+            Self::CircuitOpen { .. } => "circuit_open",
+            Self::Http { .. } => "http",
+            Self::Status { .. } => "status",
+            Self::Transport { .. } => "transport",
+            Self::Decode { .. } => "decode",
+        }
+    }
+
     /// The connection the error happened on, when there is one.
     pub fn connection(&self) -> Option<&str> {
         match self {
@@ -307,6 +329,8 @@ mod tests {
         assert!(!closed.is_retryable(), "a closed pool stays closed");
         assert_eq!(closed.connection(), Some("c"));
         assert_eq!(closed.to_string(), "connection `c`: the pool is closed");
+        assert_eq!(closed.kind(), "pool_closed");
+        assert_eq!(http(503).kind(), "http");
     }
 
     #[test]

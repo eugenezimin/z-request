@@ -24,10 +24,15 @@ The complete example is [`z-request.example.yaml`](../z-request.example.yaml).
 | Field | Default | Meaning |
 |---|---|---|
 | `scope` | `per_uri` | How `min`/`max` count. `per_uri`: each connection has its own `[min, max]`. `total`: `pool.min`/`pool.max` are the floor and cap across all connections together. |
-| `min` | `0` | `per_uri`: connections kept open per connection. `total`: kept open across all connections. They stay open even when idle, whatever `hold` is. |
+| `min` | `0` | `per_uri`: connections kept open per connection. `total`: kept open across all connections. Opened on demand, not up front; once open they stay open even when idle, whatever `hold` is. |
 | `max` | `8` | `per_uri`: most connections per connection. `total`: most across all connections. A number or `unlimited`. |
-| `hold` | `30s` | How long a released connection stays open for the next request. **0s to 60s, strictly.** `0s` connects for every request. |
-| `acquire_timeout` | `2s` | How long a request waits for a free connection before failing with `AcquireTimeout`. |
+| `hold` | `30s` | How long a released connection stays open for the next request. **0s to 60s, strictly.** `0s` connects for every request, except that a released connection still goes straight to a request already waiting for it (so load doesn't cause a connect storm). An expired connection closes up to 100 ms late, never early. |
+| `acquire_timeout` | `2s` | How long a request waits for a free connection before failing with `AcquireTimeout`. Opening a new connection is bounded separately, by the connection's `connect_timeout`. |
+
+Waiting requests are served first come, first served. Under `total`, when the cap is reached and
+a connection needs room, the pool closes the connection that has been idle longest on another
+connection, never one needed for that connection's own `min`; if there is none, the request
+waits.
 
 ## `defaults`: what every connection inherits
 

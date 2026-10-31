@@ -14,8 +14,9 @@ next to whatever credentials the connection uses. Services that authenticate to 
 their own secrets use it to trace each request back to the user or job that started it; it is
 never an authorization input.
 
-> **Status: build step 1 of 6.** Interfaces, errors and configuration are in place. The pool,
-> retry/breaker policies, credentials, and the REST and gRPC transports follow.
+> **Status: build step 2 of 6.** Interfaces, errors, configuration and the connection pool are in
+> place. The retry/breaker policies, credentials, and the REST and gRPC transports follow. The
+> pool needs a tokio runtime with time enabled.
 
 ## Features
 

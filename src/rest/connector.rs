@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::Duration;
 
-use super::error_text;
 use crate::config::ConnectionSettings;
+use crate::utils::error::error_text;
 use crate::utils::error::{ConfigError, Error, Problem};
 use crate::utils::spi::{Connection, Connector, Protocol, Target};
 
@@ -100,12 +100,12 @@ impl RestConnector {
 
             #[cfg(feature = "tls")]
             let tls = if c.endpoint.secure {
-                super::tls::client_config(c.tls.as_ref())
+                crate::tls::client_config(c.tls.as_ref())
             } else {
                 // reqwest needs a TLS configuration even for http://; share one.
                 match &plain {
                     Some(config) => Ok(config.clone()),
-                    None => super::tls::client_config(None).inspect(|config| {
+                    None => crate::tls::client_config(None).inspect(|config| {
                         plain = Some(config.clone());
                     }),
                 }
@@ -128,7 +128,7 @@ impl RestConnector {
                     #[cfg(feature = "tls")]
                     tls,
                     #[cfg(feature = "tls")]
-                    resolver: server_name(c).map(|name| {
+                    resolver: c.server_name().map(|name| {
                         std::sync::Arc::new(ServerNameResolver {
                             server_name: name.to_owned(),
                             host: c.endpoint.host.clone(),
@@ -176,29 +176,6 @@ impl Connector for RestConnector {
         })?;
         Ok(RestConnection { client })
     }
-}
-
-/// The `tls.server_name` of an `https://` connection, if set.
-pub(crate) fn server_name(c: &ConnectionSettings) -> Option<&str> {
-    c.tls
-        .as_ref()
-        .and_then(|t| t.server_name.as_deref())
-        .filter(|_| c.endpoint.secure)
-}
-
-/// The URL requests to `c` start with: scheme, host, port and base path, no trailing `/`.
-///
-/// With `tls.server_name`, the host is that name, so TLS expects it on the certificate (and
-/// sends it as SNI and `Host`); [`ServerNameResolver`] still connects to the endpoint's host.
-pub(crate) fn base_url(c: &ConnectionSettings) -> String {
-    let e = &c.endpoint;
-    let scheme = if e.secure { "https" } else { "http" };
-    let host = match server_name(c) {
-        Some(name) => name.to_owned(),
-        None if e.host.contains(':') => format!("[{}]", e.host),
-        None => e.host.clone(),
-    };
-    format!("{scheme}://{host}:{}{}", e.port, e.base_path)
 }
 
 /// Resolves `tls.server_name` to the endpoint's host, so the connection goes to the configured

@@ -194,6 +194,22 @@ pub fn grpc_code_name(code: i32) -> &'static str {
     }
 }
 
+#[cfg(any(feature = "rest", feature = "grpc"))]
+/// An error and its sources as one line, without repeating a source already in the message.
+pub(crate) fn error_text(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = e.to_string();
+    let mut source = e.source();
+    while let Some(s) = source {
+        let part = s.to_string();
+        if !text.contains(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        source = s.source();
+    }
+    text
+}
+
 /// One configuration problem: where it is and what is wrong.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {

@@ -13,11 +13,17 @@ categories = ["network-programming", "web-programming::http-client"]
 default = ["rest", "grpc", "tls", "yaml"]
 # REST transport over reqwest (HTTP/1.1).
 rest = ["dep:bytes", "dep:reqwest"]
-# gRPC transport over tonic (arrives in build step 5).
-grpc = []
+# gRPC transport over tonic (HTTP/2).
+grpc = ["dep:tonic"]
 # `https://` endpoints, custom CAs and client certificates for both transports: rustls with the
 # `ring` provider (no C toolchain), verified against the platform's trust store.
-tls = ["dep:rustls", "dep:rustls-platform-verifier", "reqwest?/rustls-no-provider", "tokio/net"]
+tls = [
+    "dep:rustls",
+    "dep:rustls-platform-verifier",
+    "reqwest?/rustls-no-provider",
+    "tokio/net",
+    "tonic?/tls-ring",
+]
 # YAML configuration files: `ConfigSource::yaml_file` / `yaml_str`.
 yaml = ["dep:serde-saphyr"]
 
@@ -32,6 +38,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde-saphyr = { version = "2", optional = true }
 thiserror = "2"
+tonic = { version = "0.14", default-features = false, features = ["channel"], optional = true }
 # The pool's waiting, timers and background closing. `rt` for `Handle`, `time` for timeouts and
 # the hold timer, `sync` for handing connections to waiting requests.
 tokio = { version = "1.54", default-features = false, features = ["rt", "sync", "time"] }
@@ -39,6 +46,10 @@ tokio = { version = "1.54", default-features = false, features = ["rt", "sync", 
 [dev-dependencies]
 # Test certificates for the TLS tests.
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+# A gRPC service (health checking) to test against, with a server.
+tonic = { version = "0.14", default-features = false, features = ["router", "server"] }
+tonic-health = { version = "0.14", default-features = false }
+tokio-stream = { version = "0.1", features = ["net"] }
 # A tiny HTTPS server for the TLS tests.
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 tokio = { version = "1.54", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "test-util", "time"] }

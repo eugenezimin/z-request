@@ -124,6 +124,17 @@ servers are verified against the platform's trust store plus `tls.ca_file`.
 A request path is joined to the endpoint's base path and can never leave it: it must start with
 `/`, and `.`/`..` segments (also percent-encoded) are rejected.
 
+## gRPC
+
+Each pooled gRPC connection is one HTTP/2 socket, and a call holds it on its own, as a REST
+request does: `max` is both the sockets and the concurrent calls to a peer, so give busy gRPC
+peers a higher `max` than REST ones. `request_timeout` is also sent as `grpc-timeout`. With
+`tls.server_name`, the certificate is checked for that name (also sent as SNI); `:authority`
+stays the endpoint's host.
+
+A long-lived stream (a subscription) takes a dedicated connection that stays out of the pool,
+and counts against `max`, until the stream's holder drops it.
+
 ## Sizes
 
 Text with a unit: `512B`, `64KiB`, `10MiB`, `1GiB` (binary) or `10KB`, `5MB`, `1GB` (decimal). A

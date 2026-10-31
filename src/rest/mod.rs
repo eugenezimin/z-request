@@ -44,29 +44,12 @@
 
 mod client;
 mod connector;
-#[cfg(feature = "tls")]
-mod tls;
 
 pub use reqwest::Method;
 pub use reqwest::header::HeaderMap;
 
 pub use self::client::{RestClient, RestRequest, RestResponse};
 pub use self::connector::{RestConnection, RestConnector};
-
-/// An error and its sources as one line, without repeating a source already in the message.
-pub(crate) fn error_text(e: &(dyn std::error::Error + 'static)) -> String {
-    let mut text = e.to_string();
-    let mut source = e.source();
-    while let Some(s) = source {
-        let part = s.to_string();
-        if !text.contains(&part) {
-            text.push_str(": ");
-            text.push_str(&part);
-        }
-        source = s.source();
-    }
-    text
-}
 
 #[cfg(test)]
 mod tests;

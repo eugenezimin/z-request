@@ -19,6 +19,7 @@ use crate::config::ConnectionSettings;
 use crate::credentials::outbound_headers;
 use crate::policy::{ExponentialBackoff, Policies, outcome};
 use crate::pool::TypedPool;
+use crate::sharing::Share;
 use crate::telemetry::{CallTelemetry, UNRESOLVED, error_status};
 use crate::utils::error::{Error, error_text};
 use crate::utils::spi::{
@@ -216,19 +217,20 @@ impl GrpcClient {
                     let result = attempt
                         .await
                         .map_err(|s| status_error(connection, &s, timeout));
-                    match &result {
-                        // The socket failed: close this connection rather than reuse it.
-                        Err(Error::Connect { .. } | Error::Transport { .. }) => lease.discard(),
-                        _ => drop(lease),
+                    // The socket failed: retire it, so every slot on it is closed.
+                    if matches!(result, Err(Error::Connect { .. } | Error::Transport { .. })) {
+                        lease.fail();
                     }
+                    drop(lease);
                     result
                 }
             })
             .await
     }
 
-    /// A connection of its own, for a long-lived stream (a subscription): it stays out of the
-    /// pool until the [`DedicatedChannel`] is dropped, and counts against `max` meanwhile.
+    /// A socket of its own, for a long-lived stream (a subscription): never shared with other
+    /// calls and never retired by `max_connection_age`, so the stream is not cut off. It holds a
+    /// pooled slot, counting against `max`, until the [`DedicatedChannel`] is dropped.
     ///
     /// Its metadata (credentials, trace context, initiator) is fixed now, and no
     /// `grpc-timeout` is sent. The breaker is checked once; nothing is retried.
@@ -241,13 +243,19 @@ impl GrpcClient {
             inner.breaker.record(&inner.target, o);
         }
         let lease = lease?;
+        let socket = inner.pool.connector().dedicated(&inner.target).await;
+        if let Some(o) = outcome(&socket) {
+            inner.breaker.record(&inner.target, o);
+        }
+        let socket = socket?;
         tracing::debug!(
             connection = inner.target.name(),
             slot = lease.slot().0,
             "dedicated gRPC channel handed out"
         );
         Ok(DedicatedChannel {
-            channel: InterceptedService::new(lease.channel().clone(), metadata),
+            channel: InterceptedService::new(socket.client().clone(), metadata),
+            _socket: socket,
             lease,
         })
     }
@@ -278,6 +286,9 @@ impl Inner {
 /// the pool; [`discard`](Self::discard) closes it instead.
 pub struct DedicatedChannel {
     channel: GrpcChannel,
+    /// The stream's own socket, closed when the channel is dropped.
+    _socket: Share<Channel>,
+    /// Counts the stream against the connection's `max`.
     lease: Lease<GrpcConnection>,
 }
 
@@ -295,8 +306,10 @@ impl DedicatedChannel {
         self.channel.clone()
     }
 
-    /// Closes the connection rather than returning it to the pool (after a transport error).
+    /// Closes the stream's socket and gives back its slot without reusing that slot's
+    /// connection (after a transport error).
     pub fn discard(self) {
+        self.lease.fail();
         self.lease.discard();
     }
 }

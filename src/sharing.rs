@@ -11,9 +11,6 @@
 //! themselves unusable, so the pool closes them as they come back and later requests open a
 //! fresh socket, which a load balancer may place on another replica.
 
-// The transports adopt the groups in the following commits.
-#![allow(dead_code)]
-
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};

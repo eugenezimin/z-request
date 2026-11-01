@@ -1,47 +1,55 @@
-//! [`GrpcConnector`] and [`GrpcConnection`]: one tonic channel (one HTTP/2 socket) per pooled
-//! connection.
+//! [`GrpcConnector`] and [`GrpcConnection`]: pooled slots mapped onto shared HTTP/2 sockets.
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use tonic::transport::{Channel, Endpoint};
 
 use crate::config::ConnectionSettings;
+use crate::sharing::{Negotiated, Peer, Share};
 use crate::utils::error::{ConfigError, Error, Problem, error_text};
 use crate::utils::spi::{Connection, Connector, Protocol, Target};
 
-/// One pooled gRPC connection: a tonic channel over one HTTP/2 socket.
+/// One pooled gRPC connection: a slot for one call at a time, on an HTTP/2 socket shared with
+/// up to `streams_per_connection` other slots.
 ///
-/// A lease is one call at a time, like REST, so the pool's `max` is both the sockets and the
-/// concurrent calls to a peer. The socket opens when the connection is opened; if it drops, the
-/// channel reconnects on the next call.
+/// So the pool's `max` is the calls in flight to a peer, and the sockets are ⌈calls ÷
+/// `streams_per_connection`⌉. A socket opens on its first call; if it drops, the channel
+/// reconnects on the next call.
 #[derive(Debug)]
 pub struct GrpcConnection {
-    channel: Channel,
+    share: Share<Channel>,
 }
 
 impl GrpcConnection {
     /// The channel for this connection's socket.
     pub(crate) fn channel(&self) -> &Channel {
-        &self.channel
+        self.share.client()
+    }
+
+    /// The socket failed: no new calls go to it, and every slot on it is closed as it comes
+    /// back.
+    pub(crate) fn fail(&self) {
+        self.share.retire();
     }
 }
 
 impl Connection for GrpcConnection {
     fn is_usable(&self) -> bool {
-        // A call abandoned midway resets only its own stream; the connection stays usable.
-        // After a transport error the lease is discarded instead.
-        true
+        // A call abandoned midway resets only its own stream. The slot is unusable once its
+        // socket failed or outlived `max_connection_age`.
+        self.share.usable()
     }
 
     async fn close(self) {
-        // Dropping the channel closes its socket.
+        // Dropping the share closes the socket with its last slot.
     }
 }
 
 /// Opens [`GrpcConnection`]s for gRPC connections, each within its `connect_timeout`.
 pub struct GrpcConnector {
-    endpoints: HashMap<Target, Endpoint>,
+    endpoints: HashMap<Target, (Endpoint, Arc<Peer<Channel>>)>,
 }
 
 impl fmt::Debug for GrpcConnector {
@@ -74,7 +82,15 @@ impl GrpcConnector {
             }
             match endpoint(c) {
                 Ok(endpoint) => {
-                    endpoints.insert(c.target(), endpoint);
+                    let target = c.target();
+                    let peer = Peer::new(
+                        &target,
+                        "grpc",
+                        Negotiated::Http2,
+                        c.streams_per_connection,
+                        c.max_connection_age,
+                    );
+                    endpoints.insert(target, (endpoint, peer));
                 }
                 Err(message) => problems.push(Problem {
                     path: format!("connections.{}.tls", c.name),
@@ -122,16 +138,38 @@ impl Connector for GrpcConnector {
     type Conn = GrpcConnection;
 
     async fn connect(&self, target: &Target) -> Result<GrpcConnection, Error> {
-        let endpoint = self
-            .endpoints
+        let (endpoint, peer) = self.profile(target)?;
+        // A shared socket opens on its first call (a failure then is `Error::Connect`), so the
+        // group exists at once and slots connecting together join it rather than each opening
+        // a socket.
+        let share = match peer.attach() {
+            Some(share) => share,
+            None => peer.add(endpoint.connect_lazy(), false),
+        };
+        Ok(GrpcConnection { share })
+    }
+}
+
+impl GrpcConnector {
+    fn profile(&self, target: &Target) -> Result<&(Endpoint, Arc<Peer<Channel>>), Error> {
+        self.endpoints
             .get(target)
             .ok_or_else(|| Error::UnknownConnection {
                 connection: target.name().to_owned(),
-            })?;
-        let channel = endpoint.connect().await.map_err(|e| Error::Connect {
-            connection: target.name().to_owned(),
-            reason: error_text(&e),
-        })?;
-        Ok(GrpcConnection { channel })
+            })
     }
+
+    /// A socket of its own for a long-lived stream: never shared, never retired by age.
+    pub(crate) async fn dedicated(&self, target: &Target) -> Result<Share<Channel>, Error> {
+        let (endpoint, peer) = self.profile(target)?;
+        Ok(peer.add(open(endpoint, target).await?, true))
+    }
+}
+
+/// Opens a channel (a socket) to `endpoint`.
+async fn open(endpoint: &Endpoint, target: &Target) -> Result<Channel, Error> {
+    endpoint.connect().await.map_err(|e| Error::Connect {
+        connection: target.name().to_owned(),
+        reason: error_text(&e),
+    })
 }

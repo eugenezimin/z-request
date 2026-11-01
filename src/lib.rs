@@ -24,7 +24,7 @@
 //!
 //! ## Features
 //!
-//! - `rest`: REST transport (reqwest, HTTP/1.1): the `rest` module.
+//! - `rest`: REST transport (reqwest, HTTP/1.1 and HTTP/2): the `rest` module.
 //! - `grpc`: gRPC transport (tonic, HTTP/2): the `grpc` module.
 //! - `tls`: `https://` endpoints, custom CAs, client certificates.
 //! - `yaml`: YAML configuration files (`ConfigSource::yaml_file` / `yaml_str`).

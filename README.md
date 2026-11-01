@@ -62,15 +62,15 @@ connections.close().await;
 Through the `tracing` and `metrics` facades only; install whatever subscriber and recorder you
 use (before `Connections::build`), or nothing. Every call runs in a `z_request.call` span and is
 counted in `z_request_calls_total`, `z_request_call_duration_seconds` and
-`z_request_retries_total`; the pool reports `z_request_pool_connections` and
-`z_request_pool_waiting`. Labels are bounded (`connection`, `protocol`, `result`, `auth`,
+`z_request_retries_total`; the pool reports `z_request_pool_connections` (request slots),
+`z_request_pool_waiting` and `z_request_sockets`. Labels are bounded (`connection`, `protocol`, `result`, `auth`,
 `state`); credentials are never recorded. See the `telemetry` module for the details.
 
 ## Features
 
 | Feature | Gives |
 |---|---|
-| `rest` | REST transport (reqwest, HTTP/1.1) |
+| `rest` | REST transport (reqwest, HTTP/1.1 and HTTP/2) |
 | `grpc` | gRPC transport (tonic, HTTP/2) |
 | `tls` | `https://`, custom CAs, client certificates (rustls with `ring`, platform trust store) |
 | `yaml` | YAML configuration files |

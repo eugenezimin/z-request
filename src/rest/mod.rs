@@ -54,4 +54,6 @@ pub use self::client::{RestClient, RestRequest, RestResponse};
 pub use self::connector::{RestConnection, RestConnector};
 
 #[cfg(test)]
+mod http2_tests;
+#[cfg(test)]
 mod tests;

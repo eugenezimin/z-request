@@ -132,6 +132,38 @@ impl Default for PoolConfig {
     }
 }
 
+/// Whether a connection's calls use HTTP/2.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Http2Mode {
+    /// HTTP/2 when the server offers it during the TLS handshake (`https://`), otherwise
+    /// HTTP/1.1. Plain `http://` uses HTTP/1.1.
+    #[default]
+    Auto,
+    /// HTTP/1.1 only (REST).
+    Off,
+    /// HTTP/2 from the first byte, without negotiating: the only way to use HTTP/2 over plain
+    /// `http://` (h2c).
+    PriorKnowledge,
+}
+
+impl Http2Mode {
+    /// The mode's name: `auto`, `off` or `prior_knowledge`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Off => "off",
+            Self::PriorKnowledge => "prior_knowledge",
+        }
+    }
+}
+
+/// The default `streams_per_connection`: requests sharing one HTTP/2 connection.
+pub const DEFAULT_STREAMS_PER_CONNECTION: u32 = 32;
+
+/// The default `max_connection_age`: 5 minutes.
+pub const DEFAULT_MAX_CONNECTION_AGE: Duration = Duration::from_secs(300);
+
 /// The default `max_response_size`: 10 MiB.
 pub const DEFAULT_MAX_RESPONSE_SIZE: u64 = 10 << 20;
 
@@ -148,6 +180,14 @@ pub struct DefaultsConfig {
     /// Largest response body accepted, in bytes (REST).
     #[serde(with = "size")]
     pub max_response_size: u64,
+    /// Whether calls use HTTP/2: `auto`, `off` or `prior_knowledge`.
+    pub http2: Http2Mode,
+    /// Requests sharing one HTTP/2 connection (1–1000; `1` shares nothing).
+    pub streams_per_connection: u32,
+    /// After this long a connection takes no new requests, so connections spread over the
+    /// peer's replicas again; `0s` keeps them as long as they are used.
+    #[serde(with = "duration")]
+    pub max_connection_age: Duration,
     /// Retries for idempotent calls.
     pub retry: RetryConfig,
     /// Circuit breaker per connection.
@@ -162,6 +202,9 @@ impl Default for DefaultsConfig {
             connect_timeout: Duration::from_secs(3),
             request_timeout: Duration::from_secs(5),
             max_response_size: DEFAULT_MAX_RESPONSE_SIZE,
+            http2: Http2Mode::Auto,
+            streams_per_connection: DEFAULT_STREAMS_PER_CONNECTION,
+            max_connection_age: DEFAULT_MAX_CONNECTION_AGE,
             retry: RetryConfig::default(),
             breaker: BreakerConfig::default(),
             auth: AuthConfig::Public,
@@ -372,6 +415,13 @@ pub struct ConnectionConfig {
     /// REST only: overrides `defaults.max_response_size`.
     #[serde(with = "size::option", skip_serializing_if = "Option::is_none")]
     pub max_response_size: Option<u64>,
+    /// Overrides `defaults.http2`. gRPC always uses HTTP/2, so `off` is an error there.
+    pub http2: Option<Http2Mode>,
+    /// Overrides `defaults.streams_per_connection`.
+    pub streams_per_connection: Option<u32>,
+    /// Overrides `defaults.max_connection_age`.
+    #[serde(with = "duration::option", skip_serializing_if = "Option::is_none")]
+    pub max_connection_age: Option<Duration>,
     /// Overrides fields of `defaults.retry`.
     pub retry: Option<RetryOverride>,
     /// Overrides fields of `defaults.breaker`.

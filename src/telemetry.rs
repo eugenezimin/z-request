@@ -13,6 +13,7 @@
 //! | `z_request_retries_total` | counter | `connection`, `protocol` |
 //! | `z_request_pool_connections` | gauge | `connection`, `state` (`busy`, `idle`, `connecting`) |
 //! | `z_request_pool_waiting` | gauge | `connection` |
+//! | `z_request_sockets` | gauge | `connection`, `protocol` |
 //!
 //! `result` is `ok` or the error's [`kind`](crate::Error::kind) (`timeout`, `http`, `status`,
 //! …); `auth` is what the call sent: `none`, `user`, `secret`, or `unresolved` when its
@@ -22,7 +23,8 @@
 //! # Spans and events
 //!
 //! Each call runs in a `z_request.call` span (level INFO) with `connection`, `protocol`,
-//! `method` and `path` (REST; the path without the query), and, once it ends, `auth`,
+//! `method`, `path` (REST; the path without the query) and `http.version` (REST: `1.1` or
+//! `2`), and, once it ends, `auth`,
 //! `attempts`, `result`, `status` (the HTTP or gRPC status code, when there is one) and `error`.
 //! Each retry is a DEBUG event, a breaker that opens a WARN event and one that closes an INFO
 //! event. Credentials are never recorded.
@@ -45,6 +47,8 @@ pub const RETRIES: &str = "z_request_retries_total";
 pub const POOL_CONNECTIONS: &str = "z_request_pool_connections";
 /// Requests waiting for a pooled connection.
 pub const POOL_WAITING: &str = "z_request_pool_waiting";
+/// Sockets (network connections) open to a peer; over HTTP/2 each carries several requests.
+pub const SOCKETS: &str = "z_request_sockets";
 
 /// Registers the metrics' descriptions with the installed recorder.
 /// [`Connections`](crate::Connections) does this when it is built; call it yourself when wiring
@@ -62,6 +66,10 @@ pub fn describe() {
         "Pooled connections, by connection and state."
     );
     describe_gauge!(POOL_WAITING, "Requests waiting for a pooled connection.");
+    describe_gauge!(
+        SOCKETS,
+        "Sockets open to a peer; over HTTP/2 each carries several requests."
+    );
 }
 
 /// Call telemetry, for the transports.
@@ -97,6 +105,7 @@ mod call {
                 protocol,
                 method = Empty,
                 path = Empty,
+                http.version = Empty,
                 auth = Empty,
                 attempts = Empty,
                 result = Empty,

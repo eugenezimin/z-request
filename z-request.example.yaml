@@ -12,6 +12,9 @@ defaults:                      # every connection inherits these unless it overr
   connect_timeout: 3s
   request_timeout: 5s
   max_response_size: 10MiB     # REST: largest response body accepted
+  http2: auto                  # auto | off | prior_knowledge (REST; gRPC is always HTTP/2)
+  streams_per_connection: 32   # requests sharing one HTTP/2 socket (1 = no sharing)
+  max_connection_age: 5m       # rotate sockets so load spreads over the peer's replicas; 0s = never
   retry:
     max_attempts: 3            # 1 = never retry
     backoff:

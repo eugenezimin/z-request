@@ -422,6 +422,9 @@ async fn exchange(
 ) -> Result<RestResponse, Error> {
     let result = async {
         let mut response = request.send().await.map_err(|e| transport(connection, e))?;
+        let version = response.version();
+        lease.observe(version);
+        tracing::Span::current().record("http.version", version_label(version));
         let status = response.status();
         let headers = std::mem::take(response.headers_mut());
         let body = read_body(&mut response, limit, connection).await?;
@@ -440,12 +443,25 @@ async fn exchange(
         })
     }
     .await;
+    // The socket failed: retire it, so every slot on it is closed rather than reused.
     match &result {
-        // The socket failed: close this connection rather than reuse it.
-        Err(Error::Connect { .. } | Error::Transport { .. }) => lease.discard(),
-        _ => drop(lease),
+        Err(Error::Connect { .. }) => lease.fail(true),
+        Err(Error::Transport { .. }) => lease.fail(false),
+        _ => {}
     }
+    drop(lease);
     result
+}
+
+/// The HTTP version as the span's `http.version` field.
+fn version_label(version: reqwest::Version) -> &'static str {
+    match version {
+        reqwest::Version::HTTP_2 => "2",
+        reqwest::Version::HTTP_11 => "1.1",
+        reqwest::Version::HTTP_10 => "1.0",
+        reqwest::Version::HTTP_3 => "3",
+        _ => "0.9",
+    }
 }
 
 async fn read_body(

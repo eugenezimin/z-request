@@ -472,3 +472,70 @@ fn max_response_size_is_a_size_with_a_unit() {
         "{e}"
     );
 }
+
+#[cfg(all(feature = "rest", feature = "grpc"))]
+#[test]
+fn http2_sharing_and_connection_age_resolve_per_connection() {
+    use z_request::config::{DEFAULT_STREAMS_PER_CONNECTION, Http2Mode};
+
+    let c: ZRequestConfig = serde_json::from_value(serde_json::json!({
+        "defaults": { "max_connection_age": "2m" },
+        "connections": {
+            "plain": { "protocol": "rest", "endpoint": "http://a" },
+            "legacy": { "protocol": "rest", "endpoint": "http://b", "http2": "off" },
+            "sidecar": {
+                "protocol": "rest", "endpoint": "http://c",
+                "http2": "prior_knowledge", "streams_per_connection": 8,
+                "max_connection_age": "0s",
+            },
+            "users": { "protocol": "grpc", "endpoint": "http://d" },
+        },
+    }))
+    .unwrap();
+    let r = c.resolve_with(secrets).unwrap();
+    let get = |name: &str| r.connections.iter().find(|c| c.name == name).unwrap();
+    let plain = get("plain");
+    assert_eq!(
+        (
+            plain.http2,
+            plain.streams_per_connection,
+            plain.max_connection_age
+        ),
+        (
+            Http2Mode::Auto,
+            DEFAULT_STREAMS_PER_CONNECTION,
+            Some(Duration::from_secs(120))
+        )
+    );
+    assert_eq!(get("legacy").http2, Http2Mode::Off);
+    let sidecar = get("sidecar");
+    assert_eq!(
+        (
+            sidecar.http2,
+            sidecar.streams_per_connection,
+            sidecar.max_connection_age
+        ),
+        (Http2Mode::PriorKnowledge, 8, None)
+    );
+    assert_eq!(
+        get("users").http2,
+        Http2Mode::PriorKnowledge,
+        "gRPC is always HTTP/2"
+    );
+
+    let mut bad = c.clone();
+    bad.defaults.streams_per_connection = 0;
+    bad.defaults.max_connection_age = Duration::from_secs(3);
+    let grpc = bad.connections.get_mut("users").unwrap();
+    grpc.http2 = Some(Http2Mode::Off);
+    grpc.streams_per_connection = Some(5000);
+    let e = bad.resolve_with(secrets).unwrap_err();
+    for needle in [
+        "defaults.streams_per_connection: must be between 1 and 1000, got 0",
+        "defaults.max_connection_age: must be 0s (off) or at least 10s",
+        "connections.users.streams_per_connection: must be between 1 and 1000, got 5000",
+        "connections.users.http2: gRPC always uses HTTP/2",
+    ] {
+        assert!(has(&e, needle), "missing `{needle}` in:\n{e}");
+    }
+}

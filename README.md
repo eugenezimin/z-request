@@ -14,9 +14,10 @@ next to whatever credentials the connection uses. Services that authenticate to 
 their own secrets use it to trace each request back to the user or job that started it; it is
 never an authorization input.
 
-> **Status: 0.2.0, all 6 build steps in place:** configuration, the shared
-> pool, retries and circuit breaking, credentials, the REST and gRPC transports, the
-> `Connections` composition root, and telemetry. A tokio runtime with time enabled is required.
+> **Status: 0.3.0, all 6 build steps in place:** configuration, the shared
+> pool, retries and circuit breaking, credentials, the REST and gRPC transports with HTTP/2
+> multiplexing, the `Connections` composition root, and telemetry. A tokio runtime with time
+> enabled is required.
 
 ## Usage
 

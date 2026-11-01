@@ -82,7 +82,9 @@ mod rest {
     use tracing_subscriber::registry::LookupSpan;
 
     use super::*;
-    use crate::telemetry::{CALL_DURATION, CALLS, POOL_CONNECTIONS, POOL_WAITING, RETRIES};
+    use crate::telemetry::{
+        CALL_DURATION, CALLS, POOL_CONNECTIONS, POOL_WAITING, RETRIES, SOCKETS,
+    };
     use crate::utils::spi::{CallContext, TraceContext};
 
     /// Answers every request on every socket with `200 ok`.
@@ -178,7 +180,8 @@ mod rest {
     fn a_call_leaves_metrics_by_connection_and_result() {
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
-        metrics::with_local_recorder(&recorder, || {
+        // Snapshot while the connections are alive: dropping them closes their sockets.
+        let snapshot = metrics::with_local_recorder(&recorder, || {
             block_on(async {
                 let url = ok_server().await;
                 let connections = Connections::build(&resolved(&[
@@ -200,9 +203,11 @@ mod rest {
                     .send(&anonymous())
                     .await;
                 assert!(matches!(down, Err(Error::Connect { .. })));
-            });
+                // Failed connections are closed by a background task; let it run.
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                snapshotter.snapshot().into_vec()
+            })
         });
-        let snapshot = snapshotter.snapshot().into_vec();
 
         let api = |result| {
             [
@@ -266,6 +271,9 @@ mod rest {
             0.0
         );
         assert_eq!(gauge(POOL_WAITING, &[("connection", "api")]), 0.0);
+        let sockets = |c| gauge(SOCKETS, &[("connection", c), ("protocol", "rest")]);
+        assert_eq!(sockets("api"), 1.0, "kept for the next request");
+        assert_eq!(sockets("down"), 0.0, "failed sockets are closed");
     }
 
     // -----------------------------------------------------------------------------------------

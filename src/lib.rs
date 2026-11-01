@@ -40,6 +40,8 @@ pub mod policy;
 pub mod pool;
 #[cfg(feature = "rest")]
 pub mod rest;
+#[cfg(any(feature = "rest", feature = "grpc"))]
+mod sharing;
 pub mod telemetry;
 #[cfg(test)]
 mod test_support;

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-01
+
 ### Added
 - HTTP/2 multiplexing for both transports: pooled request slots share HTTP/2 sockets, up to
   `streams_per_connection` (default `32`) per socket. REST learns from responses whether a peer
@@ -100,6 +102,7 @@
   `<PREFIX>__…` env vars), `ZRequestConfig::resolve` (validation, defaults applied per connection,
   secrets read from env).
 
-[Unreleased]: https://github.com/eugenezimin/z-request/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/eugenezimin/z-request/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/eugenezimin/z-request/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/eugenezimin/z-request/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/eugenezimin/z-request/releases/tag/v0.1.0

@@ -1,58 +1,145 @@
-//! [`RestConnector`] and [`RestConnection`]: one reqwest client per pooled connection.
+//! [`RestConnector`] and [`RestConnection`]: pooled slots mapped onto shared sockets.
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::ConnectionSettings;
+use crate::config::{ConnectionSettings, Http2Mode};
+use crate::sharing::{Negotiated, Peer, Share};
 use crate::utils::error::error_text;
 use crate::utils::error::{ConfigError, Error, Problem};
 use crate::utils::spi::{Connection, Connector, Protocol, Target};
 
-/// One pooled REST connection: a reqwest client that keeps at most one socket open.
+/// One pooled REST connection: a slot for one request at a time, on a socket that is its own
+/// (HTTP/1.1) or shared with up to `streams_per_connection` other slots (HTTP/2).
 ///
-/// So the pool's counts are real sockets: `max` caps them, `hold` closes them, and a lease is
-/// one request at a time, as HTTP/1.1 sends them. The socket opens on the first request.
+/// The socket opens on the first request. Which protocol a peer speaks is learned from its
+/// responses (`http2: auto`), so a peer is treated as HTTP/1.1 until it answers in HTTP/2.
 #[derive(Debug)]
 pub struct RestConnection {
-    client: reqwest::Client,
+    share: Share<reqwest::Client>,
+    /// `http2: auto`: learn the peer's protocol from responses.
+    learns: bool,
 }
 
 impl RestConnection {
     /// The client for this connection's socket.
     pub(crate) fn client(&self) -> &reqwest::Client {
-        &self.client
+        self.share.client()
+    }
+
+    /// Records the protocol a response came in.
+    pub(crate) fn observe(&self, version: reqwest::Version) {
+        if !self.learns {
+            return;
+        }
+        let spoken = if version == reqwest::Version::HTTP_2 {
+            Negotiated::Http2
+        } else {
+            Negotiated::Http1
+        };
+        self.share.peer().learn(&self.share, spoken);
+    }
+
+    /// The socket failed: no new requests go to it, and every slot on it is closed as it comes
+    /// back. A connection that expected HTTP/2 and could not be made negotiates again.
+    pub(crate) fn fail(&self, connecting: bool) {
+        if connecting && self.learns {
+            self.share.peer().forget();
+        }
+        self.share.retire();
     }
 }
 
 impl Connection for RestConnection {
     fn is_usable(&self) -> bool {
-        // Always reusable. A request abandoned midway (timed out, cancelled) leaves no
-        // half-read response behind: the HTTP client drops that socket and opens a new one for
-        // the next request. After a socket error the lease is discarded instead.
-        true
+        // A request abandoned midway (timed out, cancelled) leaves nothing half-read behind:
+        // HTTP/1.1 drops that socket and opens a new one, HTTP/2 resets just that stream. The
+        // slot is unusable once its socket failed, was retired, or outlived
+        // `max_connection_age`.
+        self.share.usable()
     }
 
     async fn close(self) {
-        // Dropping the client closes its socket.
+        // Dropping the share closes the socket with its last slot.
     }
 }
 
 /// Opens [`RestConnection`]s for REST connections.
 ///
-/// Every client it builds connects within `connect_timeout`, keeps one socket, follows no
-/// redirects (a redirect could carry the caller's token elsewhere), ignores proxy settings and
-/// never retries by itself (retries are [`Policies::run`](crate::policy::Policies::run)'s).
+/// Every client it builds connects within `connect_timeout`, follows no redirects (a redirect
+/// could carry the caller's token elsewhere) and ignores proxy settings. Its only retries are
+/// HTTP/2 requests the server refused without processing them; every other retry is
+/// [`Policies::run`](crate::policy::Policies::run)'s.
 pub struct RestConnector {
     profiles: HashMap<Target, Profile>,
 }
 
 struct Profile {
+    mode: Http2Mode,
+    secure: bool,
     connect_timeout: Duration,
+    peer: Arc<Peer<reqwest::Client>>,
     #[cfg(feature = "tls")]
     tls: rustls::ClientConfig,
     #[cfg(feature = "tls")]
-    resolver: Option<std::sync::Arc<ServerNameResolver>>,
+    resolver: Option<Arc<ServerNameResolver>>,
+}
+
+/// The HTTP versions a new client may speak.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Versions {
+    Http1,
+    Http2,
+    Either,
+}
+
+impl Profile {
+    /// What a new socket should speak: HTTP/2 only once the peer is known to speak it (so
+    /// concurrent requests on a new client wait for one socket instead of opening several).
+    fn versions(&self) -> Versions {
+        match (self.mode, self.secure, self.peer.negotiated()) {
+            (Http2Mode::Off, ..) | (Http2Mode::Auto, false, _) => Versions::Http1,
+            (Http2Mode::PriorKnowledge, ..) | (Http2Mode::Auto, true, Negotiated::Http2) => {
+                Versions::Http2
+            }
+            (Http2Mode::Auto, true, _) => Versions::Either,
+        }
+    }
+
+    fn client(&self, target: &Target) -> Result<reqwest::Client, Error> {
+        let versions = self.versions();
+        let builder = reqwest::Client::builder()
+            .connect_timeout(self.connect_timeout)
+            .pool_max_idle_per_host(1)
+            .pool_idle_timeout(None) // `hold` and `max_connection_age` decide
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy();
+        let builder = match versions {
+            Versions::Http1 => builder.http1_only(),
+            Versions::Http2 => builder.http2_prior_knowledge(),
+            Versions::Either => builder,
+        };
+        #[cfg(feature = "tls")]
+        let builder = {
+            let mut tls = self.tls.clone();
+            tls.alpn_protocols = match versions {
+                Versions::Http1 => vec![b"http/1.1".to_vec()],
+                Versions::Http2 => vec![b"h2".to_vec()],
+                Versions::Either => vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+            };
+            let builder = builder.tls_backend_preconfigured(tls);
+            match &self.resolver {
+                Some(resolver) => builder.dns_resolver(Arc::clone(resolver)),
+                None => builder,
+            }
+        };
+        builder.build().map_err(|e| Error::Connect {
+            connection: target.name().to_owned(),
+            reason: error_text(&e),
+        })
+    }
 }
 
 impl fmt::Debug for RestConnector {
@@ -65,6 +152,9 @@ impl fmt::Debug for RestConnector {
 
 impl RestConnector {
     /// A connector for `connections`, all REST. Reads their TLS files now.
+    ///
+    /// Install the metrics recorder first: each connection's `z_request_sockets` gauge
+    /// registers here.
     ///
     /// # Errors
     ///
@@ -121,15 +211,25 @@ impl RestConnector {
             #[cfg(not(feature = "tls"))]
             let _ = problem;
 
+            let (negotiated, streams) = match (c.http2, c.endpoint.secure) {
+                (Http2Mode::Off, _) | (Http2Mode::Auto, false) => (Negotiated::Http1, 1),
+                (Http2Mode::PriorKnowledge, _) => (Negotiated::Http2, c.streams_per_connection),
+                (Http2Mode::Auto, true) => (Negotiated::Unknown, c.streams_per_connection),
+            };
+            let target = c.target();
+            let peer = Peer::new(&target, "rest", negotiated, streams, c.max_connection_age);
             profiles.insert(
-                c.target(),
+                target,
                 Profile {
+                    mode: c.http2,
+                    secure: c.endpoint.secure,
                     connect_timeout: c.connect_timeout,
+                    peer,
                     #[cfg(feature = "tls")]
                     tls,
                     #[cfg(feature = "tls")]
                     resolver: c.server_name().map(|name| {
-                        std::sync::Arc::new(ServerNameResolver {
+                        Arc::new(ServerNameResolver {
                             server_name: name.to_owned(),
                             host: c.endpoint.host.clone(),
                             port: c.endpoint.port,
@@ -155,26 +255,14 @@ impl Connector for RestConnector {
             .ok_or_else(|| Error::UnknownConnection {
                 connection: target.name().to_owned(),
             })?;
-        let builder = reqwest::Client::builder()
-            .connect_timeout(profile.connect_timeout)
-            .pool_max_idle_per_host(1)
-            .pool_idle_timeout(None) // `hold` decides when the socket closes
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .no_proxy();
-        #[cfg(feature = "tls")]
-        let builder = {
-            let builder = builder.tls_backend_preconfigured(profile.tls.clone());
-            match &profile.resolver {
-                Some(resolver) => builder.dns_resolver(std::sync::Arc::clone(resolver)),
-                None => builder,
-            }
+        let share = match profile.peer.attach() {
+            Some(share) => share,
+            None => profile.peer.add(profile.client(target)?, false),
         };
-        let client = builder.build().map_err(|e| Error::Connect {
-            connection: target.name().to_owned(),
-            reason: error_text(&e),
-        })?;
-        Ok(RestConnection { client })
+        Ok(RestConnection {
+            share,
+            learns: profile.mode == Http2Mode::Auto && profile.secure,
+        })
     }
 }
 

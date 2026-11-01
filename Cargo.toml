@@ -33,7 +33,7 @@ bytes = { version = "1", optional = true }
 fastrand = "2.5"
 # Telemetry through the facades only: the host installs a recorder / subscriber, or nothing.
 metrics = "0.24"
-reqwest = { version = "0.13", default-features = false, optional = true }
+reqwest = { version = "0.13", default-features = false, features = ["http2"], optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 rustls-platform-verifier = { version = "0.7", optional = true }
 serde = { version = "1", features = ["derive"] }

@@ -23,7 +23,8 @@
 //! # Spans and events
 //!
 //! Each call runs in a `z_request.call` span (level INFO) with `connection`, `protocol`,
-//! `method` and `path` (REST; the path without the query), and, once it ends, `auth`,
+//! `method`, `path` (REST; the path without the query) and `http.version` (REST: `1.1` or
+//! `2`), and, once it ends, `auth`,
 //! `attempts`, `result`, `status` (the HTTP or gRPC status code, when there is one) and `error`.
 //! Each retry is a DEBUG event, a breaker that opens a WARN event and one that closes an INFO
 //! event. Credentials are never recorded.
@@ -104,6 +105,7 @@ mod call {
                 protocol,
                 method = Empty,
                 path = Empty,
+                http.version = Empty,
                 auth = Empty,
                 attempts = Empty,
                 result = Empty,

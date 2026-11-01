@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use crate::config::model::{
-    AuthConfig, BackoffConfig, BreakerConfig, ConnectionConfig, Limit, RetryConfig, Scope,
-    TlsConfig, ZRequestConfig,
+    AuthConfig, BackoffConfig, BreakerConfig, ConnectionConfig, Http2Mode, Limit, RetryConfig,
+    Scope, TlsConfig, ZRequestConfig,
 };
 use crate::credentials::{RESERVED_HEADERS, is_header_safe};
 use crate::utils::error::{ConfigError, Problem};
@@ -98,6 +98,13 @@ pub struct ConnectionSettings {
     pub request_timeout: Duration,
     /// REST only: the largest response body accepted, in bytes.
     pub max_response_size: u64,
+    /// Whether calls use HTTP/2 (always `prior_knowledge` for gRPC).
+    pub http2: Http2Mode,
+    /// Requests sharing one HTTP/2 connection.
+    pub streams_per_connection: u32,
+    /// After this long a connection takes no new requests; `None` keeps it as long as it is
+    /// used.
+    pub max_connection_age: Option<Duration>,
     /// Retry settings.
     pub retry: RetryConfig,
     /// Breaker settings.
@@ -178,6 +185,12 @@ impl ZRequestConfig {
         if d.max_response_size == 0 {
             p.add("defaults.max_response_size", "must be greater than 0B");
         }
+        check_sharing(
+            &mut p,
+            "defaults",
+            d.streams_per_connection,
+            d.max_connection_age,
+        );
         check_retry(&mut p, "defaults.retry", &d.retry);
         check_breaker(&mut p, "defaults.breaker", &d.breaker);
 
@@ -261,6 +274,27 @@ fn check_backoff(p: &mut Problems, path: &str, b: &BackoffConfig) {
         p.add(
             format!("{path}.multiplier"),
             "must be a number of at least 1.0",
+        );
+    }
+}
+
+/// The shortest `max_connection_age` other than `0s` (off).
+pub const MIN_CONNECTION_AGE: Duration = Duration::from_secs(10);
+
+/// The most requests one HTTP/2 connection may carry at once.
+pub const MAX_STREAMS_PER_CONNECTION: u32 = 1000;
+
+fn check_sharing(p: &mut Problems, path: &str, streams: u32, age: Duration) {
+    if !(1..=MAX_STREAMS_PER_CONNECTION).contains(&streams) {
+        p.add(
+            format!("{path}.streams_per_connection"),
+            format!("must be between 1 and {MAX_STREAMS_PER_CONNECTION}, got {streams}"),
+        );
+    }
+    if !age.is_zero() && age < MIN_CONNECTION_AGE {
+        p.add(
+            format!("{path}.max_connection_age"),
+            format!("must be 0s (off) or at least 10s, got {:?}", age),
         );
     }
 }
@@ -375,6 +409,24 @@ fn resolve_connection(
     if c.max_response_size == Some(0) {
         p.add(at("max_response_size"), "must be greater than 0B");
     }
+    let streams_per_connection = c.streams_per_connection.unwrap_or(d.streams_per_connection);
+    let max_connection_age = c.max_connection_age.unwrap_or(d.max_connection_age);
+    if c.streams_per_connection.is_some() || c.max_connection_age.is_some() {
+        let path = format!("connections.{name}");
+        check_sharing(p, &path, streams_per_connection, max_connection_age);
+    }
+    // gRPC always speaks HTTP/2; `off` is an error only where it is set for the connection.
+    let http2 = match (protocol, c.http2) {
+        (Some(Protocol::Grpc), Some(Http2Mode::Off)) => {
+            p.add(
+                at("http2"),
+                "gRPC always uses HTTP/2; `off` applies to REST only",
+            );
+            Http2Mode::PriorKnowledge
+        }
+        (Some(Protocol::Grpc), _) => Http2Mode::PriorKnowledge,
+        (_, mode) => mode.unwrap_or(d.http2),
+    };
 
     let mut retry = d.retry.clone();
     if let Some(o) = &c.retry {
@@ -472,6 +524,9 @@ fn resolve_connection(
         connect_timeout,
         request_timeout,
         max_response_size,
+        http2,
+        streams_per_connection,
+        max_connection_age: (!max_connection_age.is_zero()).then_some(max_connection_age),
         retry,
         breaker,
         auth: auth?,

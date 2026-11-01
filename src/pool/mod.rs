@@ -8,7 +8,7 @@
 //!
 //! | Setting | Behaviour |
 //! |---|---|
-//! | `max` | Connections open or being opened, per connection (`per_uri`) or in total (`total`; each connection's own `max` still applies inside it). |
+//! | `max` | Request slots open or being opened, per connection (`per_uri`) or in total (`total`; each connection's own `max` still applies inside it). The transports map slots onto sockets: one each over HTTP/1.1, shared over HTTP/2. |
 //! | `min` | Opened on demand, never up front. Once open, `hold` never closes a connection below it; under `total` `pool.min` is also a floor for all connections together. |
 //! | `hold` | A released connection stays open this long, then the reaper closes it (up to 100 ms late, never early). `0s` closes it on release, unless `min` keeps it or a waiting request takes it directly. |
 //! | `acquire_timeout` | How long a request waits for a free slot, then [`Error::AcquireTimeout`](crate::Error::AcquireTimeout). Opening the connection is bounded separately by the connection's `connect_timeout`. |

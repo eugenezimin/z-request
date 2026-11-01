@@ -375,10 +375,30 @@ async fn a_peer_that_went_away_is_a_connect_error_and_its_connection_is_closed()
 // Sockets follow the pool.
 
 #[tokio::test]
-async fn the_pool_caps_and_reuses_sockets() {
+async fn calls_share_sockets_up_to_streams_per_connection() {
+    let server = Server::start(Duration::from_millis(30), |_| Ok(())).await;
+    let mut c = plain(&server);
+    c.max = Limit::Finite(8);
+    c.streams_per_connection = 4;
+    let client = client(&c);
+    let calls: Vec<_> = (0..8)
+        .map(|_| {
+            let client = client.clone();
+            tokio::spawn(async move { check(&client, &anonymous(), true).await })
+        })
+        .collect();
+    for call in calls {
+        call.await.unwrap().unwrap();
+    }
+    assert_eq!(server.accepted(), 2, "8 calls at once, 4 per socket");
+}
+
+#[tokio::test]
+async fn one_stream_per_connection_caps_and_reuses_sockets() {
     let server = Server::start(Duration::from_millis(30), |_| Ok(())).await;
     let mut c = plain(&server);
     c.max = Limit::Finite(2);
+    c.streams_per_connection = 1;
     let client = client(&c);
     let calls: Vec<_> = (0..8)
         .map(|_| {

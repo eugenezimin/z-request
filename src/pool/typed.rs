@@ -528,6 +528,12 @@ impl<K: Connector> TypedPool<K> {
     pub fn pool(&self) -> &ConnectionPool {
         &self.0.pool
     }
+
+    /// The connector this handle opens connections with.
+    #[cfg(feature = "grpc")]
+    pub(crate) fn connector(&self) -> &K {
+        &self.0.connector
+    }
 }
 
 impl ConnectionPool {

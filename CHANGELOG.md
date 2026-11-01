@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+### Added
+- HTTP/2 multiplexing for both transports: pooled request slots share HTTP/2 sockets, up to
+  `streams_per_connection` (default `32`) per socket. REST learns from responses whether a peer
+  speaks HTTP/2 (`http2: auto`, the default, over `https://`), falls back to a socket per
+  request for HTTP/1.1 peers, and goes back to HTTP/1.1 if a peer downgrades; `http2: off` keeps
+  HTTP/1.1 only, and `http2: prior_knowledge` speaks HTTP/2 over plain `http://` (h2c). gRPC is
+  always HTTP/2. A request past `request_timeout` cancels only its own stream.
+- `max_connection_age` (default `5m`, ±10 %, `0s` = off): a socket that old takes no new
+  requests, so sockets rotate and load spreads over a peer's replicas behind socket-level load
+  balancers. Dedicated gRPC channels are never rotated.
+- A dedicated gRPC channel (`GrpcClient::dedicated`) gets a socket of its own.
+- Telemetry: the `z_request_sockets{connection, protocol}` gauge and the `http.version` span
+  field (REST).
+- REST retries HTTP/2 requests the server refused without processing them (`REFUSED_STREAM`,
+  `GOAWAY`), even POSTs.
+
+### Changed
+- The pool's `min`, `max` and `hold` count request slots, not sockets: `max` is the requests in
+  flight to a peer. Over HTTP/1.1 nothing changes; over HTTP/2 the same `max` uses far fewer
+  sockets. `z_request_pool_connections` counts slots; `z_request_sockets` counts sockets.
+- `DefaultsConfig`, `ConnectionConfig` and `ConnectionSettings` have new public fields
+  (`http2`, `streams_per_connection`, `max_connection_age`).
+
+### Dependencies
+- reqwest's `http2` feature.
+
 ## [0.2.0] - 2026-10-31
 
 ### Added

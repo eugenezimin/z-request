@@ -24,7 +24,7 @@
 //!
 //! ## Features
 //!
-//! - `rest`: REST transport (reqwest, HTTP/1.1): the `rest` module.
+//! - `rest`: REST transport (reqwest, HTTP/1.1 and HTTP/2): the `rest` module.
 //! - `grpc`: gRPC transport (tonic, HTTP/2): the `grpc` module.
 //! - `tls`: `https://` endpoints, custom CAs, client certificates.
 //! - `yaml`: YAML configuration files (`ConfigSource::yaml_file` / `yaml_str`).
@@ -40,6 +40,8 @@ pub mod policy;
 pub mod pool;
 #[cfg(feature = "rest")]
 pub mod rest;
+#[cfg(any(feature = "rest", feature = "grpc"))]
+mod sharing;
 pub mod telemetry;
 #[cfg(test)]
 mod test_support;

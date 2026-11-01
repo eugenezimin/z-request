@@ -1,7 +1,9 @@
-//! The REST transport (feature `rest`): HTTP/1.1 over reqwest, `https://` with feature `tls`.
+//! The REST transport (feature `rest`): HTTP/1.1 and HTTP/2 over reqwest, `https://` with
+//! feature `tls`.
 //!
-//! - [`RestConnector`] opens pooled [`RestConnection`]s: one reqwest client each, keeping at
-//!   most one socket, so the pool's `min`, `max`, `hold` and eviction apply to real sockets.
+//! - [`RestConnector`] opens pooled [`RestConnection`]s: one request at a time each. Over
+//!   HTTP/1.1 each has a socket of its own; over HTTP/2 up to `streams_per_connection` share
+//!   one. With `http2: auto`, a peer's protocol is learned from its responses.
 //! - [`RestClient`] calls one connection: [`RestRequest`]s are sent through
 //!   [`Policies::run`](crate::policy::Policies::run) with the call's credentials and trace
 //!   headers, and answered with a [`RestResponse`] read in full, up to `max_response_size`.
@@ -51,5 +53,7 @@ pub use reqwest::header::HeaderMap;
 pub use self::client::{RestClient, RestRequest, RestResponse};
 pub use self::connector::{RestConnection, RestConnector};
 
+#[cfg(test)]
+mod http2_tests;
 #[cfg(test)]
 mod tests;

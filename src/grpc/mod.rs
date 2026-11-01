@@ -1,8 +1,8 @@
 //! The gRPC transport (feature `grpc`): tonic over HTTP/2, `https://` with feature `tls`.
 //!
-//! - [`GrpcConnector`] opens pooled [`GrpcConnection`]s: one tonic channel (one HTTP/2 socket)
-//!   each. A call holds its connection exclusively, as a REST request does, so the pool's
-//!   `max` is both the sockets and the concurrent calls to a peer.
+//! - [`GrpcConnector`] opens pooled [`GrpcConnection`]s: one call at a time each, on an HTTP/2
+//!   socket shared by up to `streams_per_connection` of them. So the pool's `max` is the calls
+//!   in flight to a peer, and the sockets ⌈calls ÷ `streams_per_connection`⌉.
 //! - [`GrpcClient::call`] runs one call through [`Policies::run`](crate::policy::Policies::run)
 //!   on a [`GrpcChannel`], which a generated client takes as is; the channel adds the call's
 //!   credentials, trace context, initiator and `grpc-timeout`.

@@ -196,6 +196,44 @@ fn a_connection_can_be_defined_from_env_alone() {
     assert!(matches!(r.connections[0].auth, AuthSettings::Env(..)));
 }
 
+#[cfg(feature = "rest")]
+#[test]
+fn the_secret_scheme_defaults_to_bearer_and_can_be_set_from_env() {
+    let load = |scheme: Option<&str>| {
+        let mut vars = vec![
+            ("APP__CONNECTIONS__DADATA__PROTOCOL", "rest"),
+            (
+                "APP__CONNECTIONS__DADATA__ENDPOINT",
+                "https://dadata.example",
+            ),
+            ("APP__CONNECTIONS__DADATA__AUTH__MODE", "env"),
+            ("APP__CONNECTIONS__DADATA__AUTH__ENVVAR", "USERS_SECRET"),
+        ];
+        if let Some(s) = scheme {
+            vars.push(("APP__CONNECTIONS__DADATA__AUTH__SCHEME", s));
+        }
+        ConfigSource::new()
+            .with_env_vars("APP", env(&vars))
+            .load()
+            .unwrap()
+            .resolve_with(secrets)
+    };
+    let scheme_of = |r: ResolvedConfig| match &r.connections[0].auth {
+        AuthSettings::Env(_, scheme) => scheme.as_str().to_owned(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(scheme_of(load(None).unwrap()), "Bearer");
+    assert_eq!(scheme_of(load(Some("Token")).unwrap()), "Token");
+    let e = load(Some("Tö")).unwrap_err();
+    assert!(
+        has(
+            &e,
+            "connections.dadata.auth.scheme: `Tö` is not an HTTP auth scheme"
+        ),
+        "{e}"
+    );
+}
+
 #[cfg(feature = "yaml")]
 #[test]
 fn structural_problems_are_reported_per_section() {
@@ -279,6 +317,7 @@ fn every_semantic_rule_is_reported_at_once() {
             x.endpoint = Some("http://a".into());
             x.auth = Some(AuthConfig::Env {
                 envvar: "MISSING".into(),
+                scheme: None,
             });
         }),
     );
@@ -289,6 +328,7 @@ fn every_semantic_rule_is_reported_at_once() {
             x.endpoint = Some("http://a".into());
             x.auth = Some(AuthConfig::Mixed {
                 envvar: "EMPTY_SECRET".into(),
+                scheme: None,
             });
         }),
     );
@@ -299,6 +339,18 @@ fn every_semantic_rule_is_reported_at_once() {
             x.endpoint = Some("http://a".into());
             x.auth = Some(AuthConfig::Env {
                 envvar: "MULTILINE_SECRET".into(),
+                scheme: None,
+            });
+        }),
+    );
+    c.connections.insert(
+        "scheme".into(),
+        bad(&|x| {
+            x.protocol = Some(Protocol::Rest);
+            x.endpoint = Some("http://a".into());
+            x.auth = Some(AuthConfig::Env {
+                envvar: "USERS_SECRET".into(),
+                scheme: Some("Two words".into()),
             });
         }),
     );
@@ -343,6 +395,7 @@ fn every_semantic_rule_is_reported_at_once() {
         "env var `MISSING` (secret for connection `secret`) is not set or empty",
         "env var `EMPTY_SECRET` (secret for connection `blank`) is not set or empty",
         "env var `MULTILINE_SECRET` (secret for connection `multiline`) holds characters that cannot be sent in a header",
+        "connections.scheme.auth.scheme: `Two words` is not an HTTP auth scheme",
         "connections.headers.headers.Authorization: is set by z-request per call",
         "connections.headers.headers.X-Initiator: is set by z-request per call",
         "connections.headers.headers.bad header: is not a valid header name",

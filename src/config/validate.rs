@@ -456,10 +456,18 @@ fn resolve_connection(
     let auth = match c.auth.as_ref().unwrap_or(&d.auth) {
         AuthConfig::Public => Some(AuthSettings::Public),
         AuthConfig::User => Some(AuthSettings::User),
-        AuthConfig::Env { envvar } => secret(p, &auth_path, name, envvar, lookup)
-            .map(|s| AuthSettings::Env(s, AuthScheme::bearer())),
-        AuthConfig::Mixed { envvar } => secret(p, &auth_path, name, envvar, lookup)
-            .map(|s| AuthSettings::Mixed(s, AuthScheme::bearer())),
+        AuthConfig::Env { envvar, scheme } => {
+            let scheme = auth_scheme(p, &auth_path, scheme.as_deref());
+            secret(p, &auth_path, name, envvar, lookup)
+                .zip(scheme)
+                .map(|(s, scheme)| AuthSettings::Env(s, scheme))
+        }
+        AuthConfig::Mixed { envvar, scheme } => {
+            let scheme = auth_scheme(p, &auth_path, scheme.as_deref());
+            secret(p, &auth_path, name, envvar, lookup)
+                .zip(scheme)
+                .map(|(s, scheme)| AuthSettings::Mixed(s, scheme))
+        }
     };
 
     if let Some(tls) = &c.tls {
@@ -531,6 +539,24 @@ fn resolve_connection(
         tls: c.tls.clone(),
         headers,
     })
+}
+
+/// The configured scheme (`Bearer` when absent), or a problem if it is not an HTTP auth scheme.
+fn auth_scheme(p: &mut Problems, path: &str, scheme: Option<&str>) -> Option<AuthScheme> {
+    let Some(scheme) = scheme else {
+        return Some(AuthScheme::bearer());
+    };
+    let parsed = AuthScheme::new(scheme);
+    if parsed.is_none() {
+        p.add(
+            format!("{path}.scheme"),
+            format!(
+                "`{scheme}` is not an HTTP auth scheme: 1 to {} letters, digits or !#$%&'*+-.^_`|~",
+                AuthScheme::MAX_LEN
+            ),
+        );
+    }
+    parsed
 }
 
 fn secret(

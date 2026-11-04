@@ -9,7 +9,7 @@ use crate::config::model::{
 };
 use crate::credentials::{RESERVED_HEADERS, is_header_safe};
 use crate::utils::error::{ConfigError, Problem};
-use crate::utils::spi::{Protocol, Secret, Target};
+use crate::utils::spi::{AuthScheme, Protocol, Secret, Target};
 
 /// The longest `pool.hold` allowed.
 pub const MAX_HOLD: Duration = Duration::from_secs(60);
@@ -47,10 +47,10 @@ pub enum AuthSettings {
     Public,
     /// The caller's token; a call without one fails.
     User,
-    /// The service secret.
-    Env(Secret),
-    /// The caller's token if the call has one, otherwise the service secret.
-    Mixed(Secret),
+    /// The service secret, sent with its scheme.
+    Env(Secret, AuthScheme),
+    /// The caller's token if the call has one, otherwise the service secret with its scheme.
+    Mixed(Secret, AuthScheme),
 }
 
 impl std::fmt::Debug for AuthSettings {
@@ -58,8 +58,8 @@ impl std::fmt::Debug for AuthSettings {
         f.write_str(match self {
             Self::Public => "Public",
             Self::User => "User",
-            Self::Env(_) => "Env(<redacted>)",
-            Self::Mixed(_) => "Mixed(<redacted>)",
+            Self::Env(..) => "Env(<redacted>)",
+            Self::Mixed(..) => "Mixed(<redacted>)",
         })
     }
 }
@@ -456,11 +456,17 @@ fn resolve_connection(
     let auth = match c.auth.as_ref().unwrap_or(&d.auth) {
         AuthConfig::Public => Some(AuthSettings::Public),
         AuthConfig::User => Some(AuthSettings::User),
-        AuthConfig::Env { envvar } => {
-            secret(p, &auth_path, name, envvar, lookup).map(AuthSettings::Env)
+        AuthConfig::Env { envvar, scheme } => {
+            let scheme = auth_scheme(p, &auth_path, scheme.as_deref());
+            secret(p, &auth_path, name, envvar, lookup)
+                .zip(scheme)
+                .map(|(s, scheme)| AuthSettings::Env(s, scheme))
         }
-        AuthConfig::Mixed { envvar } => {
-            secret(p, &auth_path, name, envvar, lookup).map(AuthSettings::Mixed)
+        AuthConfig::Mixed { envvar, scheme } => {
+            let scheme = auth_scheme(p, &auth_path, scheme.as_deref());
+            secret(p, &auth_path, name, envvar, lookup)
+                .zip(scheme)
+                .map(|(s, scheme)| AuthSettings::Mixed(s, scheme))
         }
     };
 
@@ -533,6 +539,24 @@ fn resolve_connection(
         tls: c.tls.clone(),
         headers,
     })
+}
+
+/// The configured scheme (`Bearer` when absent), or a problem if it is not an HTTP auth scheme.
+fn auth_scheme(p: &mut Problems, path: &str, scheme: Option<&str>) -> Option<AuthScheme> {
+    let Some(scheme) = scheme else {
+        return Some(AuthScheme::bearer());
+    };
+    let parsed = AuthScheme::new(scheme);
+    if parsed.is_none() {
+        p.add(
+            format!("{path}.scheme"),
+            format!(
+                "`{scheme}` is not an HTTP auth scheme: 1 to {} letters, digits or !#$%&'*+-.^_`|~",
+                AuthScheme::MAX_LEN
+            ),
+        );
+    }
+    parsed
 }
 
 fn secret(

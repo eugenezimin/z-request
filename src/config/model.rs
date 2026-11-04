@@ -281,7 +281,8 @@ impl Default for BreakerConfig {
 /// `auth:`: what a connection's calls send.
 ///
 /// Short form `auth: public` / `auth: user`; long form `auth: { mode: env, envvar: NAME }` for
-/// the modes that need a secret.
+/// the modes that need a secret, optionally with `scheme: Token` (default `Bearer`) for peers
+/// that expect `authorization: <scheme> <secret>`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum AuthConfig {
     /// No credentials.
@@ -293,11 +294,16 @@ pub enum AuthConfig {
     Env {
         /// The env var holding the secret.
         envvar: String,
+        /// The scheme the secret is sent with; `None` means `Bearer`.
+        scheme: Option<String>,
     },
     /// The caller's token if the call has one, otherwise the secret from `envvar`.
     Mixed {
         /// The env var holding the secret.
         envvar: String,
+        /// The scheme the secret is sent with; `None` means `Bearer`. Caller tokens are always
+        /// sent as `Bearer`.
+        scheme: Option<String>,
     },
 }
 
@@ -328,6 +334,8 @@ struct AuthLong {
     mode: Mode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     envvar: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scheme: Option<String>,
 }
 
 impl Serialize for AuthConfig {
@@ -335,14 +343,16 @@ impl Serialize for AuthConfig {
         match self {
             Self::Public => Mode::Public.serialize(s),
             Self::User => Mode::User.serialize(s),
-            Self::Env { envvar } => AuthLong {
+            Self::Env { envvar, scheme } => AuthLong {
                 mode: Mode::Env,
                 envvar: Some(envvar.clone()),
+                scheme: scheme.clone(),
             }
             .serialize(s),
-            Self::Mixed { envvar } => AuthLong {
+            Self::Mixed { envvar, scheme } => AuthLong {
                 mode: Mode::Mixed,
                 envvar: Some(envvar.clone()),
+                scheme: scheme.clone(),
             }
             .serialize(s),
         }
@@ -367,7 +377,7 @@ impl<'de> Deserialize<'de> for AuthConfig {
         };
         match Raw::deserialize(d).map_err(|_| {
             D::Error::custom(
-                "auth must be `public`, `user`, or `{ mode: env|mixed, envvar: NAME }`",
+                "auth must be `public`, `user`, or `{ mode: env|mixed, envvar: NAME, scheme: Bearer }`",
             )
         })? {
             Raw::Short(s) => match s.trim() {
@@ -380,14 +390,23 @@ impl<'de> Deserialize<'de> for AuthConfig {
                     "unknown auth mode `{other}`; use public, user, env or mixed"
                 ))),
             },
-            Raw::Long(AuthLong { mode, envvar }) => match mode {
+            Raw::Long(AuthLong {
+                mode,
+                envvar,
+                scheme,
+            }) => match mode {
+                Mode::Public | Mode::User if scheme.is_some() => Err(D::Error::custom(
+                    "auth `scheme` goes with mode env or mixed (it is how the secret is sent)",
+                )),
                 Mode::Public => Ok(Self::Public),
                 Mode::User => Ok(Self::User),
                 Mode::Env => Ok(Self::Env {
                     envvar: need_envvar("env", envvar)?,
+                    scheme,
                 }),
                 Mode::Mixed => Ok(Self::Mixed {
                     envvar: need_envvar("mixed", envvar)?,
+                    scheme,
                 }),
             },
         }
@@ -516,7 +535,28 @@ mod tests {
         assert_eq!(parse(json!("user")).unwrap(), AuthConfig::User);
         assert_eq!(
             parse(json!({"mode": "mixed", "envvar": "S"})).unwrap(),
-            AuthConfig::Mixed { envvar: "S".into() }
+            AuthConfig::Mixed {
+                envvar: "S".into(),
+                scheme: None
+            }
+        );
+        let token = AuthConfig::Env {
+            envvar: "S".into(),
+            scheme: Some("Token".into()),
+        };
+        assert_eq!(
+            parse(json!({"mode": "env", "envvar": "S", "scheme": "Token"})).unwrap(),
+            token
+        );
+        assert_eq!(
+            serde_json::to_value(&token).unwrap(),
+            json!({"mode": "env", "envvar": "S", "scheme": "Token"})
+        );
+        assert!(
+            parse(json!({"mode": "user", "scheme": "Token"}))
+                .unwrap_err()
+                .to_string()
+                .contains("env or mixed")
         );
         assert!(
             parse(json!("env"))

@@ -25,7 +25,7 @@ defaults:                      # every connection inherits these unless it overr
   breaker:
     failures: 5                # consecutive failures that open the breaker
     open_for: 30s              # how long it stays open before one trial call
-  auth: public                 # public | user | { mode: env|mixed, envvar: NAME }
+  auth: public                 # public | user | { mode: env|mixed, envvar: NAME, scheme: Bearer }
 
 connections:                   # any number of named connections (lower-case, digits, _)
   users:
@@ -45,5 +45,6 @@ connections:                   # any number of named connections (lower-case, di
     protocol: rest
     endpoint: https://registry.example/api            # base URL; request paths are appended
     request_timeout: 10s
+    # auth: { mode: env, envvar: REGISTRY_KEY, scheme: Token }  # sends "authorization: Token <key>"
     headers:                                          # REST only: added to every request
       Accept: application/json

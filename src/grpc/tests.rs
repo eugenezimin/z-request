@@ -23,7 +23,9 @@ use crate::config::{AuthSettings, ConnectionSettings, Limit, PoolSettings, Scope
 use crate::policy::ConsecutiveFailures;
 use crate::pool::{ConnectionPool, TypedPool};
 use crate::test_support::connection;
-use crate::utils::spi::{CallContext, Initiator, Pool, PoolStats, Protocol, Secret, TraceContext};
+use crate::utils::spi::{
+    AuthScheme, CallContext, Initiator, Pool, PoolStats, Protocol, Secret, TraceContext,
+};
 use crate::{AuthResolver, Error};
 
 // ---------------------------------------------------------------------------------------------
@@ -219,10 +221,23 @@ fn text<'a>(metadata: &'a MetadataMap, key: &str) -> Option<&'a str> {
 // Calls.
 
 #[tokio::test]
+async fn the_service_secret_goes_with_its_configured_scheme() {
+    let server = Server::healthy().await;
+    let mut c = plain(&server);
+    c.auth = AuthSettings::Env(Secret::new("svc-secret"), AuthScheme::new("Token").unwrap());
+    let ctx = CallContext::without_user(TraceContext::default());
+    check(&client(&c), &ctx, true).await.unwrap();
+    assert_eq!(
+        text(&server.seen(0), "authorization"),
+        Some("Token svc-secret")
+    );
+}
+
+#[tokio::test]
 async fn a_call_carries_credentials_trace_and_deadline() {
     let server = Server::healthy().await;
     let mut c = plain(&server);
-    c.auth = AuthSettings::Env(Secret::new("svc-secret"));
+    c.auth = AuthSettings::Env(Secret::new("svc-secret"), AuthScheme::bearer());
     let trace = TraceContext {
         traceparent: Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".into()),
         tracestate: None,
@@ -420,7 +435,7 @@ async fn one_stream_per_connection_caps_and_reuses_sockets() {
 async fn a_dedicated_channel_holds_its_connection_for_a_stream() {
     let server = Server::healthy().await;
     let mut c = plain(&server);
-    c.auth = AuthSettings::Env(Secret::new("svc-secret"));
+    c.auth = AuthSettings::Env(Secret::new("svc-secret"), AuthScheme::bearer());
     let (client, pool) = parts(&c);
     let dedicated = client.dedicated(&anonymous()).await.unwrap();
     assert_eq!(pool.stats().busy, 1);

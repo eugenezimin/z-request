@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+- `scheme` in the long form of `auth` for modes `env` and `mixed`
+  (`auth: { mode: env, envvar: NAME, scheme: Token }`): the service secret is sent as
+  `authorization: <scheme> <secret>`. Defaults to `Bearer`; must be an RFC 9110 auth-scheme token.
+  A caller's own token is always `Bearer`.
+- `spi::AuthScheme`, the validated scheme (`AuthScheme::new`, `AuthScheme::bearer`).
+
+### Changed
+- `AuthConfig::Env` and `AuthConfig::Mixed` have a new `scheme: Option<String>` field.
+- `AuthSettings::Env` / `AuthSettings::Mixed` and `Sent::Secret` carry the `AuthScheme` next to
+  the secret.
+- `Sent::bearer()` is now `Sent::token()`; `Sent::scheme()` gives the scheme it is sent with.
+
 ## [0.3.0] - 2026-11-01
 
 ### Added

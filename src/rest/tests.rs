@@ -14,7 +14,7 @@ use crate::config::{AuthSettings, ConnectionSettings, Limit, PoolSettings, Scope
 use crate::policy::ConsecutiveFailures;
 use crate::pool::{ConnectionPool, TypedPool};
 use crate::test_support::connection;
-use crate::utils::spi::{CallContext, Initiator, Pool, Protocol, Secret, TraceContext};
+use crate::utils::spi::{AuthScheme, CallContext, Initiator, Pool, Protocol, Secret, TraceContext};
 use crate::{AuthResolver, Error};
 
 // ---------------------------------------------------------------------------------------------
@@ -271,7 +271,7 @@ async fn a_get_carries_credentials_trace_and_fixed_headers() {
 async fn a_post_sends_its_json_body_with_the_service_secret() {
     let server = Server::start(|_, _| reply(201, "")).await;
     let mut c = settings(&server.url(""));
-    c.auth = AuthSettings::Env(Secret::new("svc-secret"));
+    c.auth = AuthSettings::Env(Secret::new("svc-secret"), AuthScheme::bearer());
     let response = client(&c)
         .post("/orders")
         .json(&serde_json::json!({ "qty": 2 }))
@@ -283,6 +283,28 @@ async fn a_post_sends_its_json_body_with_the_service_secret() {
     assert_eq!(seen.body, br#"{"qty":2}"#);
     assert_eq!(seen.header("content-type"), Some("application/json"));
     assert_eq!(seen.header("authorization"), Some("Bearer svc-secret"));
+}
+
+#[tokio::test]
+async fn the_service_secret_goes_with_its_configured_scheme() {
+    let server = Server::start(|_, _| reply(200, "")).await;
+    let mut c = settings(&server.url(""));
+    let token = AuthScheme::new("Token").unwrap();
+    c.auth = AuthSettings::Mixed(Secret::new("svc-secret"), token);
+    let client = client(&c);
+    client.get("/a").send(&anonymous()).await.unwrap();
+    client
+        .get("/b")
+        .send(&CallContext::user("u-token", TraceContext::default()))
+        .await
+        .unwrap();
+    let seen = server.seen();
+    assert_eq!(seen[0].header("authorization"), Some("Token svc-secret"));
+    assert_eq!(
+        seen[1].header("authorization"),
+        Some("Bearer u-token"),
+        "a caller's token is always Bearer"
+    );
 }
 
 #[tokio::test]

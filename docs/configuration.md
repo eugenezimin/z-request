@@ -83,8 +83,14 @@ counted separately.
 |---|---|---|
 | `public` | `auth: public` | nothing |
 | `user` | `auth: user` | the caller's own token (`authorization: Bearer …`); a call without one fails with `MissingUserCredentials` |
-| `env` | `auth: { mode: env, envvar: NAME }` | the service secret from env var `NAME` |
+| `env` | `auth: { mode: env, envvar: NAME }` | the service secret from env var `NAME` (`authorization: Bearer …`) |
 | `mixed` | `auth: { mode: mixed, envvar: NAME }` | the caller's token when the call has one, otherwise the secret |
+
+`env` and `mixed` take an optional `scheme` for peers that expect another word than `Bearer`
+before the secret, e.g. `auth: { mode: env, envvar: DADATA_KEY, scheme: Token }` sends
+`authorization: Token <secret>`. The scheme must be an HTTP auth scheme (RFC 9110 §11.1: 1 to 64
+letters, digits or ``!#$%&'*+-.^_`|~``); `public` and `user` refuse it. A caller's own token is
+always sent as `Bearer`, whatever the scheme. From env: `<PREFIX>__CONNECTIONS__<NAME>__AUTH__SCHEME`.
 
 `mixed` falls back to the secret only when the call has **no** user token (startup loads,
 background jobs). It never retries with the secret after the peer rejects the user's token

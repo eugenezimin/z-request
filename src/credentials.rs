@@ -13,7 +13,7 @@ use crate::utils::spi::{
     CallContext, CredentialsResolver, INITIATOR_HEADER, Secret, Sent, Target, TraceContext,
 };
 
-/// The header that carries the credentials (`Bearer <token>`).
+/// The header that carries the credentials (`<scheme> <token>`).
 pub const AUTHORIZATION: &str = "authorization";
 /// The W3C trace context header.
 pub const TRACEPARENT: &str = "traceparent";
@@ -97,18 +97,20 @@ impl CredentialsResolver for AuthResolver {
         };
         match (auth, ctx.user_token()) {
             (AuthSettings::Public, _) => Ok(Sent::None),
-            (AuthSettings::User | AuthSettings::Mixed(_), Some(token)) => user(token),
+            (AuthSettings::User | AuthSettings::Mixed(..), Some(token)) => user(token),
             (AuthSettings::User, None) => Err(Error::MissingUserCredentials {
                 connection: target.name().to_owned(),
             }),
-            (AuthSettings::Env(secret), _) | (AuthSettings::Mixed(secret), None) => {
-                Ok(Sent::Secret(secret.clone()))
+            (AuthSettings::Env(secret, scheme), _)
+            | (AuthSettings::Mixed(secret, scheme), None) => {
+                Ok(Sent::Secret(secret.clone(), scheme.clone()))
             }
         }
     }
 }
 
-/// The headers a call sends, in order: `authorization: Bearer …` (if `sent` has a token),
+/// The headers a call sends, in order: `authorization: <scheme> …` (if `sent` has a token;
+/// `Bearer` for a caller's token, the connection's scheme for its secret),
 /// `traceparent`, `tracestate`, `x-request-id` and `x-initiator` (those the trace context has).
 ///
 /// A value a header cannot carry (control characters, line breaks, non-ASCII) is left out
@@ -121,9 +123,15 @@ pub fn outbound_headers<'a>(
     trace: &'a TraceContext,
 ) -> impl Iterator<Item = (&'static str, Cow<'a, str>)> + 'a {
     let authorization = sent
-        .bearer()
-        .filter(|s| is_header_safe(s.expose()))
-        .map(|s| (AUTHORIZATION, Cow::Owned(format!("Bearer {}", s.expose()))));
+        .token()
+        .zip(sent.scheme())
+        .filter(|(s, _)| is_header_safe(s.expose()))
+        .map(|(s, scheme)| {
+            (
+                AUTHORIZATION,
+                Cow::Owned(format!("{scheme} {}", s.expose())),
+            )
+        });
     let traced = [
         (TRACEPARENT, trace.traceparent.as_deref()),
         (TRACESTATE, trace.tracestate.as_deref()),
@@ -146,7 +154,7 @@ pub fn outbound_headers<'a>(
 mod tests {
     use super::*;
     use crate::test_support::connection;
-    use crate::utils::spi::Initiator;
+    use crate::utils::spi::{AuthScheme, Initiator};
 
     fn conn(name: &str, auth: AuthSettings) -> ConnectionSettings {
         ConnectionSettings {
@@ -160,8 +168,8 @@ mod tests {
         let conns = [
             conn("public", AuthSettings::Public),
             conn("user", AuthSettings::User),
-            conn("env", AuthSettings::Env(secret())),
-            conn("mixed", AuthSettings::Mixed(secret())),
+            conn("env", AuthSettings::Env(secret(), AuthScheme::bearer())),
+            conn("mixed", AuthSettings::Mixed(secret(), AuthScheme::bearer())),
         ];
         let targets = conns.each_ref().map(ConnectionSettings::target);
         (AuthResolver::new(&conns), targets)
@@ -178,7 +186,7 @@ mod tests {
     #[test]
     fn each_mode_sends_what_it_allows() {
         let (r, [public, user_only, env, mixed]) = resolver();
-        let secret = Sent::Secret(Secret::new("service-secret"));
+        let secret = Sent::Secret(Secret::new("service-secret"), AuthScheme::bearer());
         let token = Sent::User(Secret::new("u-token"));
 
         assert_eq!(r.resolve(&public, &user("u-token")).unwrap(), Sent::None);
@@ -251,7 +259,7 @@ mod tests {
             .map(|(n, _)| n)
             .collect();
         assert_eq!(names, [REQUEST_ID]);
-        let forged = Sent::Secret(Secret::new("bad\nsecret"));
+        let forged = Sent::Secret(Secret::new("bad\nsecret"), AuthScheme::bearer());
         assert_eq!(
             outbound_headers(&forged, &TraceContext::default()).count(),
             0

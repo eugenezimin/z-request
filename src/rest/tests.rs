@@ -14,7 +14,7 @@ use crate::config::{AuthSettings, ConnectionSettings, Limit, PoolSettings, Scope
 use crate::policy::ConsecutiveFailures;
 use crate::pool::{ConnectionPool, TypedPool};
 use crate::test_support::connection;
-use crate::utils::spi::{CallContext, Initiator, Pool, Protocol, Secret, TraceContext};
+use crate::utils::spi::{AuthScheme, CallContext, Initiator, Pool, Protocol, Secret, TraceContext};
 use crate::{AuthResolver, Error};
 
 // ---------------------------------------------------------------------------------------------
@@ -271,7 +271,7 @@ async fn a_get_carries_credentials_trace_and_fixed_headers() {
 async fn a_post_sends_its_json_body_with_the_service_secret() {
     let server = Server::start(|_, _| reply(201, "")).await;
     let mut c = settings(&server.url(""));
-    c.auth = AuthSettings::Env(Secret::new("svc-secret"));
+    c.auth = AuthSettings::Env(Secret::new("svc-secret"), AuthScheme::bearer());
     let response = client(&c)
         .post("/orders")
         .json(&serde_json::json!({ "qty": 2 }))

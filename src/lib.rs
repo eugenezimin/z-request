@@ -56,6 +56,6 @@ pub use pool::{ConnectionPool, ConnectionPoolBuilder, LruEviction, TargetStats, 
 pub use utils::error::{ConfigError, Error, Problem};
 pub use utils::spi;
 pub use utils::spi::{
-    CallContext, INITIATOR_HEADER, Initiator, InitiatorKind, InvalidInitiator, Protocol, Secret,
-    Target, TraceContext,
+    AuthScheme, CallContext, INITIATOR_HEADER, Initiator, InitiatorKind, InvalidInitiator,
+    Protocol, Secret, Target, TraceContext,
 };

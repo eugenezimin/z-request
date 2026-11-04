@@ -102,6 +102,48 @@ impl fmt::Display for Secret {
     }
 }
 
+/// The scheme a service secret is sent with: `authorization: <scheme> <secret>`.
+///
+/// An HTTP auth scheme (RFC 9110 §11.1): a token of letters, digits and
+/// ``!#$%&'*+-.^_`|~``, at most 64 characters. The default is `Bearer`; caller tokens are always
+/// sent as `Bearer`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AuthScheme(Arc<str>);
+
+impl AuthScheme {
+    /// The longest scheme accepted.
+    pub const MAX_LEN: usize = 64;
+
+    /// `Bearer`, the default.
+    pub fn bearer() -> Self {
+        Self(Arc::from("Bearer"))
+    }
+
+    /// `scheme` if it is a valid HTTP auth scheme, otherwise `None`.
+    pub fn new(scheme: &str) -> Option<Self> {
+        let token = |b: u8| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&b);
+        (!scheme.is_empty() && scheme.len() <= Self::MAX_LEN && scheme.bytes().all(token))
+            .then(|| Self(Arc::from(scheme)))
+    }
+
+    /// The scheme as sent.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Default for AuthScheme {
+    fn default() -> Self {
+        Self::bearer()
+    }
+}
+
+impl fmt::Display for AuthScheme {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// W3C trace context, request id and initiator, copied from the inbound request to every
 /// outbound call.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -300,8 +342,8 @@ pub enum Sent {
     None,
     /// The caller's own token.
     User(Secret),
-    /// The connection's service secret.
-    Secret(Secret),
+    /// The connection's service secret, sent with its scheme.
+    Secret(Secret, AuthScheme),
 }
 
 impl Sent {
@@ -310,15 +352,25 @@ impl Sent {
         match self {
             Self::None => "none",
             Self::User(_) => "user",
-            Self::Secret(_) => "secret",
+            Self::Secret(..) => "secret",
         }
     }
 
-    /// The bearer token to send, if any.
-    pub fn bearer(&self) -> Option<&Secret> {
+    /// The token to send, if any.
+    pub fn token(&self) -> Option<&Secret> {
         match self {
             Self::None => None,
-            Self::User(s) | Self::Secret(s) => Some(s),
+            Self::User(s) | Self::Secret(s, _) => Some(s),
+        }
+    }
+
+    /// The scheme the token is sent with: `Bearer` for a caller's token, the connection's
+    /// scheme for its secret.
+    pub fn scheme(&self) -> Option<&str> {
+        match self {
+            Self::None => None,
+            Self::User(_) => Some("Bearer"),
+            Self::Secret(_, scheme) => Some(scheme.as_str()),
         }
     }
 }
@@ -577,6 +629,24 @@ mod tests {
         let ctx = CallContext::user("top-secret", TraceContext::default());
         assert!(!format!("{ctx:?}").contains("top-secret"));
         assert_eq!(Sent::User(s.clone()).kind(), "user");
-        assert_eq!(Sent::None.bearer(), None);
+        assert_eq!(Sent::None.token(), None);
+    }
+
+    #[test]
+    fn auth_schemes_are_http_tokens() {
+        assert_eq!(AuthScheme::default().as_str(), "Bearer");
+        assert_eq!(AuthScheme::new("Token").unwrap().to_string(), "Token");
+        assert!(AuthScheme::new("x-api_key.v1~").is_some());
+        assert!(AuthScheme::new(&"a".repeat(64)).is_some());
+        for bad in ["", "Two words", "Tok\r\nx", "Tökén", "a:b", &"a".repeat(65)] {
+            assert!(AuthScheme::new(bad).is_none(), "{bad:?}");
+        }
+        let s = Secret::new("k");
+        assert_eq!(Sent::User(s.clone()).scheme(), Some("Bearer"));
+        assert_eq!(
+            Sent::Secret(s, AuthScheme::new("Token").unwrap()).scheme(),
+            Some("Token")
+        );
+        assert_eq!(Sent::None.scheme(), None);
     }
 }

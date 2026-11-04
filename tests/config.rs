@@ -125,7 +125,7 @@ fn the_documented_example_resolves() {
 
     let users = &r.connections[1];
     assert_eq!((users.min, users.max), (2, Limit::Finite(16)));
-    assert!(matches!(&users.auth, AuthSettings::Mixed(s) if s.expose() == "s3cr3t"));
+    assert!(matches!(&users.auth, AuthSettings::Mixed(s, _) if s.expose() == "s3cr3t"));
     assert!(
         !format!("{users:?}").contains("s3cr3t"),
         "secrets never print"
@@ -193,7 +193,7 @@ fn a_connection_can_be_defined_from_env_alone() {
         .unwrap();
     assert_eq!(r.connections.len(), 1);
     assert_eq!(r.connections[0].endpoint.port, 8080);
-    assert!(matches!(r.connections[0].auth, AuthSettings::Env(_)));
+    assert!(matches!(r.connections[0].auth, AuthSettings::Env(..)));
 }
 
 #[cfg(feature = "yaml")]

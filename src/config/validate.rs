@@ -9,7 +9,7 @@ use crate::config::model::{
 };
 use crate::credentials::{RESERVED_HEADERS, is_header_safe};
 use crate::utils::error::{ConfigError, Problem};
-use crate::utils::spi::{Protocol, Secret, Target};
+use crate::utils::spi::{AuthScheme, Protocol, Secret, Target};
 
 /// The longest `pool.hold` allowed.
 pub const MAX_HOLD: Duration = Duration::from_secs(60);
@@ -47,10 +47,10 @@ pub enum AuthSettings {
     Public,
     /// The caller's token; a call without one fails.
     User,
-    /// The service secret.
-    Env(Secret),
-    /// The caller's token if the call has one, otherwise the service secret.
-    Mixed(Secret),
+    /// The service secret, sent with its scheme.
+    Env(Secret, AuthScheme),
+    /// The caller's token if the call has one, otherwise the service secret with its scheme.
+    Mixed(Secret, AuthScheme),
 }
 
 impl std::fmt::Debug for AuthSettings {
@@ -58,8 +58,8 @@ impl std::fmt::Debug for AuthSettings {
         f.write_str(match self {
             Self::Public => "Public",
             Self::User => "User",
-            Self::Env(_) => "Env(<redacted>)",
-            Self::Mixed(_) => "Mixed(<redacted>)",
+            Self::Env(..) => "Env(<redacted>)",
+            Self::Mixed(..) => "Mixed(<redacted>)",
         })
     }
 }
@@ -456,12 +456,10 @@ fn resolve_connection(
     let auth = match c.auth.as_ref().unwrap_or(&d.auth) {
         AuthConfig::Public => Some(AuthSettings::Public),
         AuthConfig::User => Some(AuthSettings::User),
-        AuthConfig::Env { envvar } => {
-            secret(p, &auth_path, name, envvar, lookup).map(AuthSettings::Env)
-        }
-        AuthConfig::Mixed { envvar } => {
-            secret(p, &auth_path, name, envvar, lookup).map(AuthSettings::Mixed)
-        }
+        AuthConfig::Env { envvar } => secret(p, &auth_path, name, envvar, lookup)
+            .map(|s| AuthSettings::Env(s, AuthScheme::bearer())),
+        AuthConfig::Mixed { envvar } => secret(p, &auth_path, name, envvar, lookup)
+            .map(|s| AuthSettings::Mixed(s, AuthScheme::bearer())),
     };
 
     if let Some(tls) = &c.tls {

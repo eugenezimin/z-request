@@ -221,6 +221,19 @@ fn text<'a>(metadata: &'a MetadataMap, key: &str) -> Option<&'a str> {
 // Calls.
 
 #[tokio::test]
+async fn the_service_secret_goes_with_its_configured_scheme() {
+    let server = Server::healthy().await;
+    let mut c = plain(&server);
+    c.auth = AuthSettings::Env(Secret::new("svc-secret"), AuthScheme::new("Token").unwrap());
+    let ctx = CallContext::without_user(TraceContext::default());
+    check(&client(&c), &ctx, true).await.unwrap();
+    assert_eq!(
+        text(&server.seen(0), "authorization"),
+        Some("Token svc-secret")
+    );
+}
+
+#[tokio::test]
 async fn a_call_carries_credentials_trace_and_deadline() {
     let server = Server::healthy().await;
     let mut c = plain(&server);

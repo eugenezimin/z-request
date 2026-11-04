@@ -286,6 +286,28 @@ async fn a_post_sends_its_json_body_with_the_service_secret() {
 }
 
 #[tokio::test]
+async fn the_service_secret_goes_with_its_configured_scheme() {
+    let server = Server::start(|_, _| reply(200, "")).await;
+    let mut c = settings(&server.url(""));
+    let token = AuthScheme::new("Token").unwrap();
+    c.auth = AuthSettings::Mixed(Secret::new("svc-secret"), token);
+    let client = client(&c);
+    client.get("/a").send(&anonymous()).await.unwrap();
+    client
+        .get("/b")
+        .send(&CallContext::user("u-token", TraceContext::default()))
+        .await
+        .unwrap();
+    let seen = server.seen();
+    assert_eq!(seen[0].header("authorization"), Some("Token svc-secret"));
+    assert_eq!(
+        seen[1].header("authorization"),
+        Some("Bearer u-token"),
+        "a caller's token is always Bearer"
+    );
+}
+
+#[tokio::test]
 async fn a_non_2xx_status_is_an_http_error_with_the_start_of_the_body() {
     let server = Server::start(|_, _| reply(404, "no such item")).await;
     let c = settings(&server.url(""));

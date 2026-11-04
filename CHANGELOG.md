@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-03
+
 ### Added
 - `scheme` in the long form of `auth` for modes `env` and `mixed`
   (`auth: { mode: env, envvar: NAME, scheme: Token }`): the service secret is sent as
@@ -115,7 +117,8 @@
   `<PREFIX>__…` env vars), `ZRequestConfig::resolve` (validation, defaults applied per connection,
   secrets read from env).
 
-[Unreleased]: https://github.com/eugenezimin/z-request/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/eugenezimin/z-request/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/eugenezimin/z-request/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/eugenezimin/z-request/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/eugenezimin/z-request/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/eugenezimin/z-request/releases/tag/v0.1.0
